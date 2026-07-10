@@ -28,17 +28,23 @@ class ModelsConfig(BaseModel):
 
 
 class WebSearchConfig(BaseModel):
+    """Web-search server-tool configuration."""
+
     tool_version: str
     max_uses: int
 
 
 class VolatilityConfig(BaseModel):
+    """Days-until-stale thresholds per volatility class."""
+
     LOW: int
     MEDIUM: int
     HIGH: int
 
 
 class EmbeddingConfig(BaseModel):
+    """Embedding provider, models, and vector dimension."""
+
     provider: str
     voyage_model: str
     local_model: str
@@ -46,6 +52,8 @@ class EmbeddingConfig(BaseModel):
 
 
 class RetrievalConfig(BaseModel):
+    """Hybrid-retrieval parameters (RRF, chunking, rerank)."""
+
     rrf_k: int
     top_k: int
     chunk_tokens: int
@@ -54,12 +62,16 @@ class RetrievalConfig(BaseModel):
 
 
 class ResearchConfig(BaseModel):
+    """Persona sets for the research modes."""
+
     standard_personas: list[str]
     deep_extra: list[str]
     max_extra: list[str]
 
 
 class ConfidenceConfig(BaseModel):
+    """Weights and targets for the confidence score."""
+
     count_target: int
     div_target: int
     w_count: float
