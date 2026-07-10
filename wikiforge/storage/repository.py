@@ -1,0 +1,167 @@
+"""Typed async repository over aiosql named queries.
+
+All SQL lives in ``queries/*.sql``; this module only marshals between Pydantic
+records and query parameters, and enforces raw-source dedup by content hash.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import aiosql
+
+from wikiforge.models.domain import ActivityEntry, LlmCall, RawSource, Topic
+from wikiforge.models.enums import SourceType, TopicStatus, Volatility
+from wikiforge.storage.db import Database
+
+# ``mandatory_parameters=False``: the installed aiosql (15.x) otherwise requires
+# every ``-- name:`` header to declare its parameter list (e.g. ``foo^(a, b)``)
+# for all operators except ``#``/``*!``/``<!``. Our query files name parameters
+# only via ``:param`` placeholders in the SQL body, so this is disabled.
+_QUERIES = aiosql.from_path(
+    Path(__file__).parent / "queries", "aiosqlite", mandatory_parameters=False
+)
+
+
+class Repository:
+    """Marshals domain records to/from the named SQL queries."""
+
+    def __init__(self, db: Database) -> None:
+        """Bind this repository to an open :class:`Database`."""
+        self._db = db
+        self._q = _QUERIES
+
+    async def upsert_topic(self, topic: Topic) -> int:
+        """Insert or update a topic by slug; return its id."""
+        async with self._db.lock:
+            row = await self._q.upsert_topic(
+                self._db.conn,
+                slug=topic.slug,
+                title=topic.title,
+                status=str(topic.status),
+                volatility=str(topic.volatility),
+                stale_after_days=topic.stale_after_days,
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def get_topic(self, slug: str) -> Topic | None:
+        """Return the topic with the given slug, or ``None`` if absent."""
+        row = await self._q.get_topic_by_slug(self._db.conn, slug=slug)
+        if row is None:
+            return None
+        return Topic(
+            id=row["id"],
+            slug=row["slug"],
+            title=row["title"],
+            status=TopicStatus(row["status"]),
+            volatility=Volatility(row["volatility"]),
+            stale_after_days=row["stale_after_days"],
+        )
+
+    async def get_raw_source_by_hash(self, content_hash: str) -> RawSource | None:
+        """Return the raw source with the given content hash, or ``None``."""
+        row = await self._q.get_raw_source_by_hash(self._db.conn, content_hash=content_hash)
+        if row is None:
+            return None
+        return RawSource(
+            id=row["id"],
+            content_hash=row["content_hash"],
+            canonical_url=row["canonical_url"],
+            source_type=SourceType(row["source_type"]),
+            title=row["title"],
+            text=row["text"],
+            fetched_at=row["fetched_at"],
+            first_seen_session_id=row["first_seen_session_id"],
+            persona=row["persona"],
+            provenance=json.loads(row["provenance"]),
+        )
+
+    async def ingest_raw_source(self, source: RawSource) -> tuple[int, bool]:
+        """Insert a raw source, or update provenance if the hash already exists.
+
+        Returns ``(row_id, created)``. Raw-source text is immutable; only the
+        provenance JSON is refreshed on a re-ingest.
+        """
+        provenance = json.dumps(source.provenance)
+        async with self._db.lock:
+            # The existing-row check and the insert/update it guards must be
+            # atomic under the write lock, else two concurrent ingests of the
+            # same new hash could both see "not found" and race on the
+            # UNIQUE(content_hash) constraint.
+            existing = await self.get_raw_source_by_hash(source.content_hash)
+            if existing is not None:
+                await self._q.update_raw_source_provenance(
+                    self._db.conn, provenance=provenance, content_hash=source.content_hash
+                )
+                await self._db.conn.commit()
+                assert existing.id is not None
+                return existing.id, False
+            row = await self._q.insert_raw_source(
+                self._db.conn,
+                content_hash=source.content_hash,
+                canonical_url=source.canonical_url,
+                source_type=str(source.source_type),
+                title=source.title,
+                text=source.text,
+                fetched_at=source.fetched_at.isoformat(),
+                first_seen_session_id=source.first_seen_session_id,
+                persona=source.persona,
+                provenance=provenance,
+            )
+            await self._db.conn.commit()
+        return int(row["id"]), True
+
+    async def insert_activity(self, entry: ActivityEntry) -> int:
+        """Insert a CLI/MCP activity log entry; return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_activity(
+                self._db.conn,
+                command=entry.command,
+                args_redacted=json.dumps(entry.args_redacted),
+                topic_id=entry.topic_id,
+                summary=entry.summary,
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def insert_llm_call(self, call: LlmCall) -> int:
+        """Insert a logged LLM invocation; return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_llm_call(
+                self._db.conn,
+                provider=call.provider,
+                model=call.model,
+                purpose=call.purpose,
+                topic_id=call.topic_id,
+                input_tokens=call.input_tokens,
+                output_tokens=call.output_tokens,
+                cost_usd=call.cost_usd,
+                session_id=call.session_id,
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def cost_totals_by_model(self) -> dict[str, float]:
+        """Aggregate total cost per model via the ``cost_by_model`` named query."""
+        totals: dict[str, float] = {}
+        async for row in self._q.cost_by_model(self._db.conn):
+            totals[row["model"]] = float(row["total"])
+        return totals
+
+    async def recent_activity(self, limit: int) -> list[ActivityEntry]:
+        """Return the most recent activity rows, newest first, as domain records."""
+        entries: list[ActivityEntry] = []
+        async for r in self._q.recent_activity(self._db.conn, limit=limit):
+            entries.append(
+                ActivityEntry(
+                    id=r["id"],
+                    ts=r["ts"],
+                    command=r["command"],
+                    args_redacted=json.loads(r["args_redacted"]),
+                    topic_id=r["topic_id"],
+                    summary=r["summary"],
+                )
+            )
+        return entries
