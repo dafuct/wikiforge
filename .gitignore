@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# uv
+.uv/
+
+# wikiforge runtime scratch
+_scratch_demo/
+*.db
+*.db-wal
+*.db-shm
