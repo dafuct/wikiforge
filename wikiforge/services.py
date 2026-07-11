@@ -20,7 +20,19 @@ from wikiforge.config.settings import (
 from wikiforge.embed.factory import effective_embedding_dim
 from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.ingest import sources as ingest_sources
-from wikiforge.models.domain import Article, RawSource, ResearchSession, ThesisVerdict, Topic
+from wikiforge.lint.auditor import AuditFinding, WikiAuditor
+from wikiforge.lint.linter import LintFinding, WikiLinter
+from wikiforge.models.domain import (
+    Article,
+    Dataset,
+    InventoryItem,
+    RawSource,
+    ResearchSession,
+    ThesisVerdict,
+    Topic,
+)
+from wikiforge.models.enums import QueryDepth
+from wikiforge.query.service import QueryResult
 from wikiforge.search.index import index_owner
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
@@ -59,6 +71,20 @@ def detect_target_kind(target: str) -> str:
     return "file"
 
 
+async def build_raw_source(target: str, *, http_client: httpx.AsyncClient) -> RawSource:
+    """Classify ``target`` and build its (not-yet-persisted) ``RawSource`` via the M2 adapters.
+
+    Shared by :func:`ingest_source` and :func:`wikiforge.ops.inventory.collect` so both
+    entry points use identical URL/PDF/file classification and extraction.
+    """
+    kind = detect_target_kind(target)
+    if kind == "url":
+        return await ingest_sources.ingest_url(target, client=http_client)
+    if kind == "pdf":
+        return ingest_sources.ingest_pdf(Path(target))
+    return ingest_sources.ingest_file(Path(target))
+
+
 async def ingest_source(
     home: Path,
     target: str,
@@ -79,12 +105,7 @@ async def ingest_source(
     from ``home`` and closed on exit.
     """
     kind = detect_target_kind(target)
-    if kind == "url":
-        source = await ingest_sources.ingest_url(target, client=http_client)
-    elif kind == "pdf":
-        source = ingest_sources.ingest_pdf(Path(target))
-    else:
-        source = ingest_sources.ingest_file(Path(target))
+    source = await build_raw_source(target, http_client=http_client)
 
     db = _db or await Database.open(home, dim=embedder.dim)
     try:
@@ -253,5 +274,207 @@ async def run_related(home: Path, topic_text: str) -> list[tuple[Topic, float]]:
         if topic.id is None:
             raise RuntimeError(f"topic {slug!r} has no id")
         return await related_topics(repo, topic.id)
+    finally:
+        await db.close()
+
+
+async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
+    """Answer a question against the wiki, citing the retrieved chunks it relied on.
+
+    Assembles the real ``AnthropicProvider``, the factory-selected embedding provider,
+    and a ``HybridRetriever``, then delegates to
+    :func:`~wikiforge.query.service.answer_query`. For ``depth="deep"`` a real
+    sentence-transformers ``CrossEncoder`` (``retrieval.rerank_model``) is lazily built
+    and wired in as the reranker; ``quick``/``standard`` queries never load it.
+    """
+    from anthropic import AsyncAnthropic
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.embed.factory import build_embedding_provider
+    from wikiforge.llm.anthropic_provider import AnthropicProvider
+    from wikiforge.query.service import answer_query
+    from wikiforge.search.retriever import HybridRetriever, Reranker
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        tracker = CostTracker(repo, cfg)
+        llm = AnthropicProvider(AsyncAnthropic(), tracker, cfg)
+        embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
+
+        reranker: Reranker | None = None
+        if depth == QueryDepth.DEEP:
+            from sentence_transformers import CrossEncoder
+
+            cross_encoder = CrossEncoder(cfg.retrieval.rerank_model)
+
+            def _rerank(q: str, docs: list[str]) -> list[float]:
+                scores = cross_encoder.predict([(q, doc) for doc in docs])
+                return [float(s) for s in scores]
+
+            reranker = _rerank
+
+        retriever = HybridRetriever(repo, embedder, cfg, reranker=reranker)
+        return await answer_query(llm, retriever, query, depth=depth)
+    finally:
+        await db.close()
+
+
+async def run_lint(home: Path, *, fix: bool) -> tuple[list[LintFinding], int]:
+    """Audit the wiki for broken links, orphans, missing citations, and staleness.
+
+    Builds a :class:`~wikiforge.lint.linter.WikiLinter` bound to ``home`` (so a
+    ``--fix`` pass can rewrite on-disk Markdown, not just the DB row), runs
+    :meth:`~wikiforge.lint.linter.WikiLinter.lint`, and — when ``fix`` is set —
+    immediately applies :meth:`~wikiforge.lint.linter.WikiLinter.fix` to every
+    finding it just found. Returns ``(findings, fixed)`` where ``findings`` is what
+    the lint pass reported (whether or not repaired) and ``fixed`` is the count
+    :meth:`~wikiforge.lint.linter.WikiLinter.fix` actually repaired (0 without
+    ``fix``) — the linter may safely skip a finding whose markup is already gone.
+    """
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        linter = WikiLinter(repo, home=home)
+        findings = await linter.lint()
+        fixed = await linter.fix(findings) if fix else 0
+        return findings, fixed
+    finally:
+        await db.close()
+
+
+def _parse_feedback_target(target: str) -> tuple[str, int]:
+    """Parse a ``<type>:<id>`` feedback target, defaulting to ``article`` for a bare id."""
+    if ":" in target:
+        kind, _, raw_id = target.partition(":")
+        return kind, int(raw_id)
+    return "article", int(target)
+
+
+async def run_feedback(home: Path, target: str, action: str, note: str) -> int:
+    """Record a feedback verdict against an article or finding target.
+
+    ``target`` is ``article:<id>`` or ``finding:<id>``; a bare integer defaults
+    to ``article:<id>``. ``action`` is ``approve``, ``reject``, or ``correct``,
+    mapped to :class:`~wikiforge.models.enums.FeedbackVerdict`. Returns the new
+    feedback row's id.
+    """
+    from wikiforge.models.enums import FeedbackVerdict
+    from wikiforge.ops.feedback import FeedbackStore
+
+    target_type, target_id = _parse_feedback_target(target)
+    verdict = FeedbackVerdict(action)
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        store = FeedbackStore(repo)
+        return await store.record(target_type, target_id, verdict, note)
+    finally:
+        await db.close()
+
+
+async def run_refresh(home: Path, *, run: bool) -> list[Topic]:
+    """List (or, when ``run``, re-research) topics whose freshness window has lapsed.
+
+    Builds the real ``AnthropicProvider``/``ResearchOrchestrator`` only when
+    ``run`` is set — a plain listing needs no network access, so ``--run``-less
+    calls never construct one.
+    """
+    from datetime import UTC, datetime
+
+    from wikiforge.ops.freshness import refresh_topics, stale_topics
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        now = datetime.now(UTC)
+        if not run:
+            return await stale_topics(repo, now=now)
+
+        from anthropic import AsyncAnthropic
+
+        from wikiforge.activity.cost import CostTracker
+        from wikiforge.llm.anthropic_provider import AnthropicProvider
+        from wikiforge.research.orchestrator import ResearchOrchestrator
+
+        llm = AnthropicProvider(AsyncAnthropic(), CostTracker(repo, cfg), cfg)
+        orch = ResearchOrchestrator(llm, repo, cfg)
+        return await refresh_topics(orch, repo, now=now, run=True)
+    finally:
+        await db.close()
+
+
+async def run_audit(home: Path, slug: str) -> list[AuditFinding]:
+    """Re-verify a topic's citation quotes against their immutable raw sources.
+
+    Resolves the topic by slug and delegates to
+    :meth:`~wikiforge.lint.auditor.WikiAuditor.audit_topic`, which raises
+    ``ValueError`` for an unknown slug. Returns an empty list when no citation
+    drift is found.
+    """
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        auditor = WikiAuditor(repo)
+        return await auditor.audit_topic(slug)
+    finally:
+        await db.close()
+
+
+async def run_collect(home: Path, collection_name: str, target: str) -> InventoryItem:
+    """Ingest ``target`` into a named inventory collection.
+
+    Builds a real ``httpx.AsyncClient`` and delegates to
+    :func:`wikiforge.ops.inventory.collect`, which reuses the same M2 classification
+    and adapters as :func:`ingest_source` but only catalogues the result (no chunk
+    indexing), keeping collected items out of the default query search scope.
+    """
+    from wikiforge.ops.inventory import collect
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        async with httpx.AsyncClient() as client:
+            return await collect(repo, collection_name, target, http_client=client)
+    finally:
+        await db.close()
+
+
+async def run_dataset_add(home: Path, name: str, path: Path) -> Dataset:
+    """Record an on-disk dataset's name, path, and byte size.
+
+    Delegates to :func:`wikiforge.ops.inventory.add_dataset`.
+    """
+    from wikiforge.ops.inventory import add_dataset
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        return await add_dataset(repo, name, path)
+    finally:
+        await db.close()
+
+
+async def run_archive(home: Path, slug: str) -> Topic:
+    """Archive a topic by slug, excluding it from the default query/retrieval scope.
+
+    Delegates to :func:`wikiforge.ops.inventory.archive_topic`, which raises
+    ``ValueError`` for an unknown slug.
+    """
+    from wikiforge.ops.inventory import archive_topic
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        return await archive_topic(repo, slug)
     finally:
         await db.close()

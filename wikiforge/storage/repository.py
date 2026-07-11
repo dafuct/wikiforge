@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 
 import aiosql
@@ -15,8 +16,10 @@ import aiosql
 from wikiforge.models.domain import (
     ActivityEntry,
     Article,
+    Dataset,
     EmbeddingCacheEntry,
     Feedback,
+    InventoryItem,
     LlmCall,
     RawSource,
     ResearchFinding,
@@ -34,6 +37,7 @@ from wikiforge.models.enums import (
     Volatility,
 )
 from wikiforge.research.context import SessionEvidence
+from wikiforge.search.rrf import ChunkTarget
 from wikiforge.storage.db import Database
 
 # ``mandatory_parameters=False``: the installed aiosql (15.x) otherwise requires
@@ -43,6 +47,16 @@ from wikiforge.storage.db import Database
 _QUERIES = aiosql.from_path(
     Path(__file__).parent / "queries", "aiosqlite", mandatory_parameters=False
 )
+
+
+@dataclass
+class CitationSource:
+    """A stored citation joined with the text of its cited (immutable) raw source."""
+
+    claim: str
+    quote: str | None
+    raw_source_id: int
+    source_text: str
 
 
 class Repository:
@@ -79,6 +93,9 @@ class Repository:
             status=TopicStatus(row["status"]),
             volatility=Volatility(row["volatility"]),
             stale_after_days=row["stale_after_days"],
+            last_researched_at=row["last_researched_at"],
+            last_compiled_at=row["last_compiled_at"],
+            created_at=row["created_at"],
         )
 
     async def get_topic_by_id(self, topic_id: int) -> Topic | None:
@@ -93,6 +110,9 @@ class Repository:
             status=TopicStatus(row["status"]),
             volatility=Volatility(row["volatility"]),
             stale_after_days=row["stale_after_days"],
+            last_researched_at=row["last_researched_at"],
+            last_compiled_at=row["last_compiled_at"],
+            created_at=row["created_at"],
         )
 
     async def get_raw_source_by_hash(self, content_hash: str) -> RawSource | None:
@@ -509,6 +529,33 @@ class Repository:
             )
             await self._db.conn.commit()
 
+    async def citation_count_for_article(self, article_id: int) -> int:
+        """Return how many citation rows exist for an article (0 if none)."""
+        row = await self._q.citation_count_for_article(self._db.conn, article_id=article_id)
+        return int(row["n"]) if row is not None else 0
+
+    async def citations_with_source_for_topic(self, topic_id: int) -> list[CitationSource]:
+        """Return a topic's latest-article citations joined with their cited source's text.
+
+        Used by :class:`~wikiforge.lint.auditor.WikiAuditor` to re-verify that each
+        citation's ``quote`` still appears in its (immutable) raw source.
+        """
+        return [
+            CitationSource(
+                claim=r["claim"],
+                quote=r["quote"],
+                raw_source_id=int(r["raw_source_id"]),
+                source_text=r["source_text"],
+            )
+            async for r in self._q.citations_with_source_for_topic(self._db.conn, topic_id=topic_id)
+        ]
+
+    async def update_article_body(self, article_id: int, body_md: str) -> None:
+        """Overwrite a stored article's ``body_md`` in place (used by :class:`WikiLinter`'s fix)."""
+        async with self._db.lock:
+            await self._q.update_article_body(self._db.conn, article_id=article_id, body_md=body_md)
+            await self._db.conn.commit()
+
     async def insert_conflict(
         self, topic_id: int, article_id: int, claim: str, nature: str, source_ids: list[int]
     ) -> None:
@@ -578,3 +625,143 @@ class Repository:
             (int(r["related_topic_id"]), float(r["score"]))
             async for r in self._q.topic_links_for(self._db.conn, topic_id=topic_id)
         ]
+
+    async def fts_search(self, query: str, owner_types: list[str], limit: int) -> list[int]:
+        """Return chunk rowids matching an FTS5 query, best BM25 match first.
+
+        Picks the ``_articles``-scoped query when ``owner_types == ["article"]``,
+        else the unscoped query over all owner types (static SQL, no dynamic
+        ``IN (:list)`` interpolation).
+        """
+        search = (
+            self._q.fts_search_articles if owner_types == ["article"] else self._q.fts_search_all
+        )
+        return [int(r["rowid"]) async for r in search(self._db.conn, query=query, limit=limit)]
+
+    async def vec_search(
+        self, query_vector: list[float], owner_types: list[str], limit: int
+    ) -> list[int]:
+        """Return chunk rowids by KNN search on the query vector, nearest first.
+
+        Binds the query vector as a JSON-array string literal, the same form
+        used by :meth:`insert_chunk_vector`. Picks the ``_articles``-scoped
+        query when ``owner_types == ["article"]``, else the unscoped query.
+        """
+        literal = "[" + ",".join(repr(float(x)) for x in query_vector) + "]"
+        search = (
+            self._q.vec_search_articles if owner_types == ["article"] else self._q.vec_search_all
+        )
+        return [
+            int(r["rowid"]) async for r in search(self._db.conn, query_vector=literal, limit=limit)
+        ]
+
+    async def insert_feedback(self, feedback: Feedback) -> int:
+        """Insert a user feedback row and return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_feedback(
+                self._db.conn,
+                target_type=feedback.target_type,
+                target_id=feedback.target_id,
+                verdict=str(feedback.verdict),
+                note=feedback.note,
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def list_stale_topics(self, now_iso: str) -> list[Topic]:
+        """Return ACTIVE topics whose freshness window has lapsed as of ``now_iso``.
+
+        A topic is stale when it has never been researched
+        (``last_researched_at IS NULL``) or its last research is older than its
+        ``stale_after_days`` window, per the ``julianday`` date math in
+        ``list_stale_topics`` (``ops.sql``).
+        """
+        return [
+            Topic(
+                id=r["id"],
+                slug=r["slug"],
+                title=r["title"],
+                status=TopicStatus(r["status"]),
+                volatility=Volatility(r["volatility"]),
+                stale_after_days=r["stale_after_days"],
+                last_researched_at=r["last_researched_at"],
+                last_compiled_at=r["last_compiled_at"],
+                created_at=r["created_at"],
+            )
+            async for r in self._q.list_stale_topics(self._db.conn, now=now_iso)
+        ]
+
+    async def set_topic_researched(self, topic_id: int, at: str) -> None:
+        """Stamp a topic's ``last_researched_at`` timestamp."""
+        async with self._db.lock:
+            await self._q.set_topic_researched(self._db.conn, id=topic_id, at=at)
+            await self._db.conn.commit()
+
+    async def chunk_targets(self, rowids: list[int]) -> list[ChunkTarget]:
+        """Resolve chunk rowids to their owner and (if any) topic.
+
+        Article chunks resolve to their topic's id/status; raw_source chunks
+        (including finding chunks and unattached raw sources) get
+        ``topic_id=None, topic_status=None`` — Task 2 treats ``None`` as active.
+        """
+        targets: list[ChunkTarget] = []
+        for rowid in rowids:
+            row = await self._q.chunk_target(self._db.conn, rowid=rowid)
+            if row is None:
+                continue
+            targets.append(
+                ChunkTarget(
+                    rowid=int(row["rowid"]),
+                    owner_type=row["owner_type"],
+                    owner_id=int(row["owner_id"]),
+                    seq=int(row["seq"]),
+                    text=row["text"],
+                    topic_id=row["topic_id"],
+                    topic_status=row["topic_status"],
+                )
+            )
+        return targets
+
+    async def insert_inventory_item(self, item: InventoryItem) -> int:
+        """Insert a catalogued inventory item and return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_inventory_item(
+                self._db.conn,
+                collection_name=item.collection_name,
+                kind=item.kind,
+                name=item.name,
+                data=json.dumps(item.data),
+                source_id=item.source_id,
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def list_inventory(self, collection_name: str) -> list[InventoryItem]:
+        """Return the catalogued items in a named collection, oldest first."""
+        return [
+            InventoryItem(
+                id=r["id"],
+                collection_name=r["collection_name"],
+                kind=r["kind"],
+                name=r["name"],
+                data=json.loads(r["data"]),
+                source_id=r["source_id"],
+                created_at=r["created_at"],
+            )
+            async for r in self._q.list_inventory(self._db.conn, collection_name=collection_name)
+        ]
+
+    async def insert_dataset(self, dataset: Dataset) -> int:
+        """Insert a tracked on-disk dataset row and return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_dataset(
+                self._db.conn, name=dataset.name, path=dataset.path, bytes=dataset.bytes
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def set_topic_status(self, slug: str, status: TopicStatus) -> None:
+        """Update a topic's lifecycle status by slug."""
+        async with self._db.lock:
+            await self._q.set_topic_status(self._db.conn, slug=slug, status=str(status))
+            await self._db.conn.commit()
