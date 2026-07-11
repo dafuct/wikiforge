@@ -110,3 +110,33 @@ async def test_provider_dim_agrees_with_effective_dim(wiki_home: Path) -> None:
         voyage.dim == effective_embedding_dim(cfg, env={"VOYAGE_API_KEY": "k"}) == cfg.embedding.dim
     )
     await db.close()
+
+
+async def test_voyage_records_embedding_cost(wiki_home: Path) -> None:
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.config.settings import load_config, write_default_config
+
+    write_default_config(wiki_home, wiki_name="x")
+    cfg = load_config(wiki_home)
+    db = await Database.open(wiki_home, dim=cfg.embedding.dim)
+    await db.init_schema()
+    tracker = CostTracker(Repository(db), cfg)
+    with respx.mock:
+        respx.post(_VOYAGE).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [{"embedding": [0.1, 0.2, 0.3, 0.4]}],
+                    "usage": {"total_tokens": 1000},
+                },
+            )
+        )
+        provider = VoyageEmbeddingProvider(
+            api_key="k", model="voyage-3.5", dim=4, cost_tracker=tracker
+        )
+        await provider.embed(["hello"])
+        await provider.aclose()
+    totals = await tracker.totals_by_model()
+    # voyage-3.5 input price 0.06/MTok; 1000 tokens -> 1000/1e6 * 0.06 = 6e-5
+    assert totals["voyage-3.5"] == pytest.approx(6e-5)
+    await db.close()

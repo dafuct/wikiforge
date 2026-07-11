@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
+from wikiforge.activity.cost import CostTracker
 from wikiforge.config.settings import Config
 from wikiforge.embed.local import LocalEmbeddingProvider
 from wikiforge.embed.provider import CachedEmbeddingProvider, EmbeddingProvider
@@ -31,6 +32,7 @@ def build_embedding_provider(
     config: Config,
     repo: Repository,
     *,
+    cost_tracker: CostTracker | None = None,
     env: Mapping[str, str] = os.environ,
 ) -> EmbeddingProvider:
     """Return a cache-wrapped embedding provider (Voyage if keyed, else Local)."""
@@ -40,10 +42,15 @@ def build_embedding_provider(
         if api_key is None:
             raise ValueError("embedding provider 'voyage' requires VOYAGE_API_KEY to be set")
         base = VoyageEmbeddingProvider(
-            api_key=api_key, model=config.embedding.voyage_model, dim=config.embedding.dim
+            api_key=api_key,
+            model=config.embedding.voyage_model,
+            dim=config.embedding.dim,
+            cost_tracker=cost_tracker,
         )
     else:
         base = LocalEmbeddingProvider(
-            model=config.embedding.local_model, dim=config.embedding.local_dim
+            model=config.embedding.local_model,
+            dim=config.embedding.local_dim,
+            cost_tracker=cost_tracker,
         )
     return CachedEmbeddingProvider(base, repo)
