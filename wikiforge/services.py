@@ -316,7 +316,7 @@ async def run_related(home: Path, topic_text: str) -> list[tuple[Topic, float]]:
 async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
     """Answer a question against the wiki, citing the retrieved chunks it relied on.
 
-    Assembles the real ``AnthropicProvider``, the factory-selected embedding provider,
+    Assembles the factory-selected LLM provider, the factory-selected embedding provider,
     and a ``HybridRetriever``, then delegates to
     :func:`~wikiforge.query.service.answer_query`. For ``depth="deep"`` a real
     sentence-transformers ``CrossEncoder`` (``retrieval.rerank_model``) is lazily built
@@ -446,7 +446,7 @@ async def run_feedback(home: Path, target: str, action: str, note: str) -> int:
 async def run_refresh(home: Path, *, run: bool) -> list[Topic]:
     """List (or, when ``run``, re-research) topics whose freshness window has lapsed.
 
-    Builds the real ``AnthropicProvider``/``ResearchOrchestrator`` only when
+    Builds the factory-selected LLM provider and ``ResearchOrchestrator`` only when
     ``run`` is set — a plain listing needs no network access, so ``--run``-less
     calls never construct one.
     """
