@@ -10,3 +10,6 @@ RETURNING id;
 
 -- name: get_topic_by_slug^
 SELECT * FROM topics WHERE slug = :slug;
+
+-- name: get_topic_by_id^
+SELECT * FROM topics WHERE id = :id;

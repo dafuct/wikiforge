@@ -6,6 +6,7 @@ Milestone 1 provides ``init_wiki``; Milestone 2 adds ``ingest_source`` and
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import httpx
@@ -19,7 +20,7 @@ from wikiforge.config.settings import (
 from wikiforge.embed.factory import effective_embedding_dim
 from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.ingest import sources as ingest_sources
-from wikiforge.models.domain import RawSource
+from wikiforge.models.domain import Article, RawSource, ResearchSession, ThesisVerdict, Topic
 from wikiforge.search.index import index_owner
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
@@ -112,3 +113,145 @@ async def ingest_source(
     finally:
         if _db is None:
             await db.close()
+
+
+def slugify(text: str) -> str:
+    """Return a URL/filesystem-safe slug: lowercase, non-alphanumerics collapsed to hyphens."""
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+async def run_research(
+    home: Path,
+    topic_text: str,
+    *,
+    mode: str,
+    new_topic: bool,
+    budget_usd: float | None,
+    resume_session_id: int | None,
+) -> ResearchSession:
+    """Run (or resume) a research session for a topic.
+
+    Resolves the topic by slug. If it doesn't exist yet, it is created only
+    when ``new_topic`` is set (with volatility inferred via
+    :func:`~wikiforge.research.volatility.infer_volatility`); otherwise a
+    ``ValueError`` is raised. Delegates the actual persona fan-out to
+    :class:`~wikiforge.research.orchestrator.ResearchOrchestrator`.
+    """
+    from anthropic import AsyncAnthropic
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.llm.anthropic_provider import AnthropicProvider
+    from wikiforge.research.orchestrator import ResearchOrchestrator
+    from wikiforge.research.volatility import infer_volatility
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        llm = AnthropicProvider(AsyncAnthropic(), CostTracker(repo, cfg), cfg)
+        slug = slugify(topic_text)
+        topic = await repo.get_topic(slug)
+        if topic is None:
+            if not new_topic:
+                raise ValueError(f"unknown topic {topic_text!r}; pass --new-topic to create it")
+            volatility, stale = await infer_volatility(llm, topic_text, cfg)
+            topic_id = await repo.upsert_topic(
+                Topic(slug=slug, title=topic_text, volatility=volatility, stale_after_days=stale)
+            )
+        else:
+            if topic.id is None:
+                raise RuntimeError(f"topic {slug!r} has no id")
+            topic_id = topic.id
+        orch = ResearchOrchestrator(llm, repo, cfg)
+        return await orch.research(
+            topic_id=topic_id,
+            topic_title=topic_text,
+            mode=mode,
+            budget_usd=budget_usd,
+            resume_session_id=resume_session_id,
+        )
+    finally:
+        await db.close()
+
+
+async def run_thesis(
+    home: Path,
+    claim: str,
+    *,
+    mode: str,
+    budget_usd: float | None,
+) -> ThesisVerdict:
+    """Evaluate a thesis claim via FOR/AGAINST persona agents.
+
+    Delegates fan-out and verdict synthesis to
+    :meth:`~wikiforge.research.orchestrator.ResearchOrchestrator.evaluate_thesis`.
+    """
+    from anthropic import AsyncAnthropic
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.llm.anthropic_provider import AnthropicProvider
+    from wikiforge.research.orchestrator import ResearchOrchestrator
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        llm = AnthropicProvider(AsyncAnthropic(), CostTracker(repo, cfg), cfg)
+        orch = ResearchOrchestrator(llm, repo, cfg)
+        return await orch.evaluate_thesis(claim=claim, mode=mode, budget_usd=budget_usd)
+    finally:
+        await db.close()
+
+
+async def run_compile(home: Path, *, full: bool) -> list[Article]:
+    """Compile every active topic's gathered evidence into a synthesized, cited article.
+
+    Builds the real LLM provider and the factory embedding provider (Voyage if
+    keyed, else the local model), then delegates to
+    :meth:`~wikiforge.compile.compiler.Compiler.compile_all`. Returns an empty
+    list when there is nothing to compile (no topics, or every topic's digest
+    is already up to date and ``full`` is not set).
+    """
+    from anthropic import AsyncAnthropic
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.compile.compiler import Compiler
+    from wikiforge.embed.factory import build_embedding_provider
+    from wikiforge.llm.anthropic_provider import AnthropicProvider
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        tracker = CostTracker(repo, cfg)
+        llm = AnthropicProvider(AsyncAnthropic(), tracker, cfg)
+        embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
+        compiler = Compiler(llm, embedder, repo, cfg, home)
+        return await compiler.compile_all(force=full)
+    finally:
+        await db.close()
+
+
+async def run_related(home: Path, topic_text: str) -> list[tuple[Topic, float]]:
+    """Return a topic's knowledge-graph neighbours, most similar first.
+
+    Resolves the topic by slug and raises ``ValueError`` if it is unknown.
+    Reads the similarity links stored by the last compile
+    (:func:`~wikiforge.graph.links.refresh_topic_links`); it does not need an
+    LLM or embedding provider of its own.
+    """
+    from wikiforge.graph.links import related_topics
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        slug = slugify(topic_text)
+        topic = await repo.get_topic(slug)
+        if topic is None:
+            raise ValueError(f"unknown topic {topic_text!r}; topic not found")
+        if topic.id is None:
+            raise RuntimeError(f"topic {slug!r} has no id")
+        return await related_topics(repo, topic.id)
+    finally:
+        await db.close()
