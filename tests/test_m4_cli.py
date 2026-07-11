@@ -69,6 +69,33 @@ def test_cli_dataset_add_prints_byte_size(tmp_path: Path) -> None:
     assert str(len(b"col1,col2\n1,2\n")) in result.stdout
 
 
+def test_cli_dataset_add_missing_file_fails_cleanly(tmp_path: Path) -> None:
+    home = tmp_path / "w"
+    CliRunner().invoke(app, ["init", "demo", "--home", str(home)])
+
+    result = CliRunner().invoke(
+        app, ["dataset", "add", "mydata", str(tmp_path / "nope.csv"), "--home", str(home)]
+    )
+
+    assert result.exit_code != 0
+    assert "error" in result.output.lower()
+
+
+# --- collect (missing local file, no network) ---------------------------------------
+
+
+def test_cli_collect_missing_file_fails_cleanly(tmp_path: Path) -> None:
+    home = tmp_path / "w"
+    CliRunner().invoke(app, ["init", "demo", "--home", str(home)])
+
+    result = CliRunner().invoke(
+        app, ["collect", "tools", str(tmp_path / "nope.txt"), "--home", str(home)]
+    )
+
+    assert result.exit_code != 0
+    assert "error" in result.output.lower()
+
+
 # --- query on empty wiki (no network) -----------------------------------------------
 
 

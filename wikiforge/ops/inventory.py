@@ -21,7 +21,6 @@ from wikiforge.storage.repository import Repository
 
 async def collect(
     repo: Repository,
-    home: Path,
     collection_name: str,
     target: str,
     *,

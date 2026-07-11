@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 
 from wikiforge.config.settings import Config
 from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.models.enums import QueryDepth, TopicStatus
+from wikiforge.search.ftsquery import to_fts_match_query
 from wikiforge.search.rrf import ChunkTarget, reciprocal_rank_fusion
 from wikiforge.storage.repository import Repository
 
@@ -45,7 +47,7 @@ class HybridRetriever:
         candidate_limit = top_k * _CANDIDATE_MULTIPLIER
 
         (query_vec,) = await self._embedder.embed([query])
-        fts_ids = await self._repo.fts_search(query, owner_types, candidate_limit)
+        fts_ids = await self._fts_search(query, owner_types, candidate_limit)
         vec_ids = await self._repo.vec_search(query_vec, owner_types, candidate_limit)
 
         fused = reciprocal_rank_fusion([fts_ids, vec_ids], k=self._config.retrieval.rrf_k)
@@ -64,3 +66,20 @@ class HybridRetriever:
             ]
 
         return targets[:top_k]
+
+    async def _fts_search(self, query: str, owner_types: list[str], limit: int) -> list[int]:
+        """Run FTS5 search on sanitized free text, degrading to no matches on failure.
+
+        User text is first turned into a safe ``OR``-of-quoted-terms expression
+        (:func:`~wikiforge.search.ftsquery.to_fts_match_query`) so ordinary
+        punctuation like a trailing ``?`` can't reach the FTS5 parser. An empty
+        expression (no word characters) and any residual parse error both fall
+        back to ``[]`` so retrieval degrades to vector-only rather than raising.
+        """
+        match = to_fts_match_query(query)
+        if not match:
+            return []
+        try:
+            return await self._repo.fts_search(match, owner_types, limit)
+        except sqlite3.OperationalError:
+            return []

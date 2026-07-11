@@ -317,7 +317,7 @@ async def test_collect_file_target_records_inventory_item_linked_to_raw_source(
     doc.write_text("A note about a handy CLI tool.", encoding="utf-8")
 
     async with httpx.AsyncClient() as client:
-        item = await collect(repo, wiki_home, "tools", str(doc), http_client=client)
+        item = await collect(repo, "tools", str(doc), http_client=client)
 
     assert item.id is not None and item.id > 0
     assert item.collection_name == "tools"

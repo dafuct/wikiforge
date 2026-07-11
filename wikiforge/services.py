@@ -321,15 +321,17 @@ async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
         await db.close()
 
 
-async def run_lint(home: Path, *, fix: bool) -> list[LintFinding]:
+async def run_lint(home: Path, *, fix: bool) -> tuple[list[LintFinding], int]:
     """Audit the wiki for broken links, orphans, missing citations, and staleness.
 
     Builds a :class:`~wikiforge.lint.linter.WikiLinter` bound to ``home`` (so a
     ``--fix`` pass can rewrite on-disk Markdown, not just the DB row), runs
     :meth:`~wikiforge.lint.linter.WikiLinter.lint`, and — when ``fix`` is set —
     immediately applies :meth:`~wikiforge.lint.linter.WikiLinter.fix` to every
-    finding it just found. Returns the findings from the lint pass (i.e. what
-    was reported, whether or not they were then repaired).
+    finding it just found. Returns ``(findings, fixed)`` where ``findings`` is what
+    the lint pass reported (whether or not repaired) and ``fixed`` is the count
+    :meth:`~wikiforge.lint.linter.WikiLinter.fix` actually repaired (0 without
+    ``fix``) — the linter may safely skip a finding whose markup is already gone.
     """
     cfg = load_config(home)
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
@@ -337,9 +339,8 @@ async def run_lint(home: Path, *, fix: bool) -> list[LintFinding]:
         repo = Repository(db)
         linter = WikiLinter(repo, home=home)
         findings = await linter.lint()
-        if fix:
-            await linter.fix(findings)
-        return findings
+        fixed = await linter.fix(findings) if fix else 0
+        return findings, fixed
     finally:
         await db.close()
 
@@ -441,7 +442,7 @@ async def run_collect(home: Path, collection_name: str, target: str) -> Inventor
     try:
         repo = Repository(db)
         async with httpx.AsyncClient() as client:
-            return await collect(repo, home, collection_name, target, http_client=client)
+            return await collect(repo, collection_name, target, http_client=client)
     finally:
         await db.close()
 
