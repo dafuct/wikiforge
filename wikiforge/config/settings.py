@@ -5,7 +5,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from wikiforge.config.defaults import DEFAULT_CONFIG_TOML
 
@@ -15,12 +15,16 @@ CONFIG_FILENAME = "config.toml"
 class ModelPrice(BaseModel):
     """Per-million-token pricing for one model."""
 
+    model_config = ConfigDict(extra="forbid")
+
     input: float
     output: float = 0.0
 
 
 class ModelsConfig(BaseModel):
     """Model-routing configuration: two tiers plus a task→tier map."""
+
+    model_config = ConfigDict(extra="forbid")
 
     cheap: str
     flagship: str
@@ -30,12 +34,16 @@ class ModelsConfig(BaseModel):
 class WebSearchConfig(BaseModel):
     """Web-search server-tool configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     tool_version: str
     max_uses: int
 
 
 class VolatilityConfig(BaseModel):
     """Days-until-stale thresholds per volatility class."""
+
+    model_config = ConfigDict(extra="forbid")
 
     LOW: int
     MEDIUM: int
@@ -45,6 +53,8 @@ class VolatilityConfig(BaseModel):
 class EmbeddingConfig(BaseModel):
     """Embedding provider, models, and vector dimension."""
 
+    model_config = ConfigDict(extra="forbid")
+
     provider: str
     voyage_model: str
     local_model: str
@@ -53,6 +63,8 @@ class EmbeddingConfig(BaseModel):
 
 class RetrievalConfig(BaseModel):
     """Hybrid-retrieval parameters (RRF, chunking, rerank)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     rrf_k: int
     top_k: int
@@ -64,6 +76,8 @@ class RetrievalConfig(BaseModel):
 class ResearchConfig(BaseModel):
     """Persona sets for the research modes."""
 
+    model_config = ConfigDict(extra="forbid")
+
     standard_personas: list[str]
     deep_extra: list[str]
     max_extra: list[str]
@@ -71,6 +85,8 @@ class ResearchConfig(BaseModel):
 
 class ConfidenceConfig(BaseModel):
     """Weights and targets for the confidence score."""
+
+    model_config = ConfigDict(extra="forbid")
 
     count_target: int
     div_target: int
@@ -84,6 +100,8 @@ class ConfidenceConfig(BaseModel):
 
 class Config(BaseModel):
     """The fully parsed ``config.toml``."""
+
+    model_config = ConfigDict(extra="forbid")
 
     wiki_name: str
     models: ModelsConfig
