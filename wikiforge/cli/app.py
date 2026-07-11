@@ -44,6 +44,42 @@ def init(
     typer.echo(f"Initialized wiki {name!r} at {result}")
 
 
+@app.command()
+def ingest(
+    target: str = typer.Argument(..., help="URL, PDF path, or text file to ingest."),
+    home: str | None = HomeOption,
+) -> None:
+    """Ingest a source (URL, PDF, or file) into the wiki."""
+    import httpx
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.config.settings import load_config
+    from wikiforge.embed.factory import build_embedding_provider, effective_embedding_dim
+    from wikiforge.services import ingest_source
+    from wikiforge.storage.db import Database
+    from wikiforge.storage.repository import Repository
+
+    target_home = resolve_home(home)
+
+    async def _run() -> tuple[str, bool]:
+        cfg = load_config(target_home)
+        db = await Database.open(target_home, dim=effective_embedding_dim(cfg))
+        try:
+            repo = Repository(db)
+            embedder = build_embedding_provider(cfg, repo, cost_tracker=CostTracker(repo, cfg))
+            async with httpx.AsyncClient() as client:
+                src, created = await ingest_source(
+                    target_home, target, http_client=client, embedder=embedder, _db=db
+                )
+            return src.title, created
+        finally:
+            await db.close()
+
+    title, created = asyncio.run(_run())
+    verb = "Ingested" if created else "Re-ingested (dedup)"
+    typer.echo(f"{verb}: {title}")
+
+
 def main() -> None:
     """Console-script entry point."""
     app()

@@ -51,6 +51,7 @@ provider = "auto"
 voyage_model = "voyage-3.5"
 local_model = "BAAI/bge-small-en-v1.5"
 dim = 1024
+local_dim = 384
 
 [retrieval]
 rrf_k = 60

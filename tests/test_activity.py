@@ -27,6 +27,10 @@ def test_redact_masks_secret_keys() -> None:
     assert out["api_key"] == "***"
     assert out["ANTHROPIC_API_KEY"] == "***"
     assert out["token"] == "***"
+    more = ActivityRecorder.redact({"db_password": "p", "Authorization": "b", "secret_x": "s"})
+    assert more["db_password"] == "***"
+    assert more["Authorization"] == "***"
+    assert more["secret_x"] == "***"
 
 
 async def test_record_and_digest(recorder: ActivityRecorder) -> None:

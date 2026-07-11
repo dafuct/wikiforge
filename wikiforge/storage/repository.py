@@ -7,11 +7,12 @@ records and query parameters, and enforces raw-source dedup by content hash.
 from __future__ import annotations
 
 import json
+import struct
 from pathlib import Path
 
 import aiosql
 
-from wikiforge.models.domain import ActivityEntry, LlmCall, RawSource, Topic
+from wikiforge.models.domain import ActivityEntry, EmbeddingCacheEntry, LlmCall, RawSource, Topic
 from wikiforge.models.enums import SourceType, TopicStatus, Volatility
 from wikiforge.storage.db import Database
 
@@ -166,3 +167,94 @@ class Repository:
                 )
             )
         return entries
+
+    async def get_embedding(
+        self, content_hash: str, provider: str, model: str
+    ) -> list[float] | None:
+        """Return a cached embedding vector, or None on a miss."""
+        row = await self._q.get_embedding(
+            self._db.conn, content_hash=content_hash, provider=provider, model=model
+        )
+        if row is None:
+            return None
+        blob: bytes = row["vector"]
+        count = len(blob) // 4
+        return list(struct.unpack(f"<{count}f", blob))
+
+    async def put_embedding(self, entry: EmbeddingCacheEntry) -> None:
+        """Store an embedding vector as little-endian float32 bytes."""
+        blob = struct.pack(f"<{len(entry.vector)}f", *entry.vector)
+        async with self._db.lock:
+            await self._q.put_embedding(
+                self._db.conn,
+                content_hash=entry.content_hash,
+                provider=entry.provider,
+                model=entry.model,
+                dim=entry.dim,
+                vector=blob,
+            )
+            await self._db.conn.commit()
+
+    async def rowids_for_owner(self, owner_type: str, owner_id: int) -> list[int]:
+        """Return the chunk rowids belonging to an owner.
+
+        ``rowids_for_owner`` is a no-suffix aiosql query, which the aiosqlite
+        adapter returns as an async generator — consume it with ``async for``,
+        matching the existing ``recent_activity`` / ``cost_by_model`` pattern in
+        this repository (a plain ``await`` raises ``TypeError``).
+        """
+        return [
+            int(r["rowid"])
+            async for r in self._q.rowids_for_owner(
+                self._db.conn, owner_type=owner_type, owner_id=owner_id
+            )
+        ]
+
+    async def delete_chunks_for_owner(self, owner_type: str, owner_id: int) -> None:
+        """Delete an owner's vector rows (by rowid) then its chunk rows.
+
+        FTS rows are removed by the ``chunks`` delete trigger; ``chunks_vec`` has
+        no trigger, so its rows are deleted explicitly first to avoid orphans.
+        """
+        rowids = await self.rowids_for_owner(owner_type, owner_id)
+        async with self._db.lock:
+            for rowid in rowids:
+                await self._q.delete_chunk_vector(self._db.conn, rowid=rowid)
+            await self._q.delete_chunks_for_owner(
+                self._db.conn, owner_type=owner_type, owner_id=owner_id
+            )
+            await self._db.conn.commit()
+
+    async def insert_chunk(
+        self, owner_type: str, owner_id: int, seq: int, text: str, content_hash: str
+    ) -> int:
+        """Insert one chunk row and return its rowid (FTS is trigger-synced)."""
+        async with self._db.lock:
+            row = await self._q.insert_chunk(
+                self._db.conn,
+                owner_type=owner_type,
+                owner_id=owner_id,
+                seq=seq,
+                text=text,
+                content_hash=content_hash,
+            )
+            await self._db.conn.commit()
+        return int(row["rowid"])
+
+    async def get_meta(self, key: str) -> str | None:
+        """Return a wiki-metadata value, or None if unset."""
+        row = await self._q.get_meta(self._db.conn, key=key)
+        return None if row is None else str(row["value"])
+
+    async def set_meta(self, key: str, value: str) -> None:
+        """Set a wiki-metadata key/value pair."""
+        async with self._db.lock:
+            await self._q.set_meta(self._db.conn, key=key, value=value)
+            await self._db.conn.commit()
+
+    async def insert_chunk_vector(self, rowid: int, vector: list[float]) -> None:
+        """Insert a chunk's embedding into the vec0 table (JSON-array literal)."""
+        literal = "[" + ",".join(repr(float(x)) for x in vector) + "]"
+        async with self._db.lock:
+            await self._q.insert_chunk_vector(self._db.conn, rowid=rowid, embedding=literal)
+            await self._db.conn.commit()
