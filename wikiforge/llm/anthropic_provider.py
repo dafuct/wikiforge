@@ -52,13 +52,13 @@ class AnthropicProvider:
         system: str,
         user: str,
         *,
-        tier: str,
+        tier: str | None = None,
         use_web_search: bool = False,
         topic_id: int | None = None,
         session_id: int | None = None,
     ) -> LlmResult:
         """Return a plain-text completion, optionally with the web-search tool enabled."""
-        model = self._config.model_for_task(purpose)
+        model = self._config.model_for_task(purpose, tier)
         kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": _MAX_TOKENS,
@@ -88,13 +88,13 @@ class AnthropicProvider:
         system: str,
         user: str,
         *,
-        tier: str,
+        tier: str | None = None,
         schema: type[T],
         topic_id: int | None = None,
         session_id: int | None = None,
     ) -> ParsedResult[T]:
         """Return a completion validated against ``schema`` — no tools, no citations."""
-        model = self._config.model_for_task(purpose)
+        model = self._config.model_for_task(purpose, tier)
         response = await self._client.messages.create(
             model=model,
             max_tokens=_MAX_TOKENS,
