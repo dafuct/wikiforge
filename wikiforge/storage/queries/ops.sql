@@ -22,3 +22,19 @@ WHERE status = 'ACTIVE'
 
 -- name: set_topic_researched!
 UPDATE topics SET last_researched_at = :at WHERE id = :id;
+
+-- name: insert_inventory_item^
+INSERT INTO inventory_items (collection_name, kind, name, data, source_id)
+VALUES (:collection_name, :kind, :name, :data, :source_id)
+RETURNING id;
+
+-- name: list_inventory
+SELECT * FROM inventory_items WHERE collection_name = :collection_name ORDER BY id;
+
+-- name: insert_dataset^
+INSERT INTO datasets (name, path, bytes)
+VALUES (:name, :path, :bytes)
+RETURNING id;
+
+-- name: set_topic_status!
+UPDATE topics SET status = :status WHERE slug = :slug;
