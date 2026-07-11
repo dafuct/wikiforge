@@ -113,6 +113,23 @@ async def test_compile_writes_article_and_markdown(env) -> None:
     assert len(stored_ids) == 1  # "s1" resolved; "s2" (not a stored source) dropped
 
 
+async def test_recompile_drops_old_version_chunks(env) -> None:
+    cfg, repo, tid, home = env
+    compiler = Compiler(FakeLLM(), FakeEmbedder(), repo, cfg, home)
+    topic = await repo.get_topic("topic")
+    await compiler.compile_topic(topic, force=True)  # version 1
+    await compiler.compile_topic(topic, force=True)  # version 2 (new article id)
+    distinct = await repo._db.fetchall(
+        "SELECT COUNT(DISTINCT owner_id) AS n FROM chunks WHERE owner_type='article'"
+    )
+    assert distinct[0]["n"] == 1  # only the latest version's chunks remain indexed
+    art_chunks = await repo._db.fetchall(
+        "SELECT COUNT(*) AS c FROM chunks WHERE owner_type='article'"
+    )
+    vecs = await repo._db.fetchall("SELECT COUNT(*) AS c FROM chunks_vec")
+    assert vecs[0]["c"] == art_chunks[0]["c"]  # no orphan vectors after the version swap
+
+
 async def test_incremental_skip_and_force(env) -> None:
     cfg, repo, tid, home = env
     llm = FakeLLM()

@@ -44,9 +44,10 @@ class ResearchOrchestrator:
         reached it, stops early and marks the session ``PARTIAL`` — so the
         first wave always runs, and the cap only ever stops a *later* wave.
         A resume (``resume_session_id`` set) re-runs only the personas with no
-        persisted finding yet, and is governed solely by the ``budget_usd``
-        passed to *this* call — it does not inherit the original session's
-        (already-spent) cap.
+        persisted finding yet. The ``budget_usd`` passed to *this* call is a
+        TOTAL-session cap, measured against cumulative session spend (prior
+        spend counts toward it) — it does not re-read the original session's
+        stored budget. Pass no budget to run the remaining personas uncapped.
         """
         personas = self._config.personas_for_mode(mode)
         if resume_session_id is not None:

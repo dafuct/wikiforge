@@ -91,6 +91,10 @@ class Compiler:
         await index_owner(
             self._repo, self._embedder, owner_type="article", owner_id=article_id, text=markdown
         )
+        if latest is not None and latest.id is not None:
+            # Drop the previous version's chunks from the retrieval index so only the live
+            # article version is searchable. Older article ROWS are kept for history.
+            await self._repo.delete_chunks_for_owner("article", latest.id)
 
         from wikiforge.graph.links import refresh_topic_links
 
