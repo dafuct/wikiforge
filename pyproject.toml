@@ -51,6 +51,7 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.13"
 strict = true
 plugins = ["pydantic.mypy"]
+untyped_calls_exclude = ["pymupdf"]
 
 [[tool.mypy.overrides]]
 module = "sqlite_vec"
