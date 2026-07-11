@@ -140,6 +140,25 @@ async def ingest_source(
             await db.close()
 
 
+async def run_ingest(home: Path, target: str) -> tuple[RawSource, bool]:
+    """Ingest a URL/PDF/file target into the wiki, returning (source, created).
+
+    Builds the real embedder + HTTP client and delegates to :func:`ingest_source`.
+    """
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.embed.factory import build_embedding_provider
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        embedder = build_embedding_provider(cfg, repo, cost_tracker=CostTracker(repo, cfg))
+        async with httpx.AsyncClient() as client:
+            return await ingest_source(home, target, http_client=client, embedder=embedder, _db=db)
+    finally:
+        await db.close()
+
+
 def slugify(text: str) -> str:
     """Return a URL/filesystem-safe slug: lowercase, non-alphanumerics collapsed to hyphens."""
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
