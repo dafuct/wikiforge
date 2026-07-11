@@ -241,6 +241,17 @@ class Repository:
             await self._db.conn.commit()
         return int(row["rowid"])
 
+    async def get_meta(self, key: str) -> str | None:
+        """Return a wiki-metadata value, or None if unset."""
+        row = await self._q.get_meta(self._db.conn, key=key)
+        return None if row is None else str(row["value"])
+
+    async def set_meta(self, key: str, value: str) -> None:
+        """Set a wiki-metadata key/value pair."""
+        async with self._db.lock:
+            await self._q.set_meta(self._db.conn, key=key, value=value)
+            await self._db.conn.commit()
+
     async def insert_chunk_vector(self, rowid: int, vector: list[float]) -> None:
         """Insert a chunk's embedding into the vec0 table (JSON-array literal)."""
         literal = "[" + ",".join(repr(float(x)) for x in vector) + "]"

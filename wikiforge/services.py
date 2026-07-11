@@ -40,7 +40,9 @@ async def init_wiki(name: str, home: Path) -> Path:
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:
         await db.init_schema()
-        recorder = ActivityRecorder(Repository(db))
+        repo = Repository(db)
+        await repo.set_meta("embedding_dim", str(effective_embedding_dim(cfg)))
+        recorder = ActivityRecorder(repo)
         await recorder.record("init", {"name": name}, summary=f"created wiki {name!r}")
     finally:
         await db.close()
@@ -90,6 +92,13 @@ async def ingest_source(
         stored = await repo.get_raw_source_by_hash(source.content_hash)
         if stored is None:
             raise RuntimeError("stored raw source missing after ingest")
+        expected_dim = await repo.get_meta("embedding_dim")
+        if expected_dim is not None and int(expected_dim) != embedder.dim:
+            raise ValueError(
+                f"this wiki was initialized for embedding dimension {expected_dim}, but "
+                f"the active embedder produces {embedder.dim}. Set or unset VOYAGE_API_KEY "
+                "to match the init-time provider, or re-init the wiki."
+            )
         await index_owner(
             repo, embedder, owner_type="raw_source", owner_id=source_id, text=stored.text
         )

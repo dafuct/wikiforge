@@ -5,6 +5,8 @@ from __future__ import annotations
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from wikiforge.activity.cost import CostTracker
+
 _ENDPOINT = "https://api.voyageai.com/v1/embeddings"
 
 
@@ -25,6 +27,7 @@ class VoyageEmbeddingProvider:
         model: str,
         dim: int,
         client: httpx.AsyncClient | None = None,
+        cost_tracker: CostTracker | None = None,
     ) -> None:
         """Configure the provider; the HTTP client is created lazily on first use."""
         self._api_key = api_key
@@ -32,6 +35,7 @@ class VoyageEmbeddingProvider:
         self._dim = dim
         self._client = client
         self._owns_client = client is None
+        self._cost = cost_tracker
 
     @property
     def dim(self) -> int:
@@ -69,6 +73,15 @@ class VoyageEmbeddingProvider:
         )
         response.raise_for_status()
         payload = response.json()
+        if self._cost is not None:
+            total = int(payload.get("usage", {}).get("total_tokens", 0))
+            await self._cost.record(
+                provider="voyage",
+                model=self._model,
+                purpose="embed",
+                input_tokens=total,
+                output_tokens=0,
+            )
         return [item["embedding"] for item in payload["data"]]
 
     async def aclose(self) -> None:

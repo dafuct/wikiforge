@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import httpx
+import pytest
 
 from wikiforge.services import detect_target_kind, ingest_source
 from wikiforge.storage.db import Database
+from wikiforge.storage.repository import Repository
 
 
 class FakeEmbedder:
@@ -61,4 +63,24 @@ async def test_ingest_file_dedups_and_indexes(tmp_path: Path) -> None:
 
     chunks = await db.fetchall("SELECT COUNT(*) AS c FROM chunks")
     assert chunks[0]["c"] >= 1
+    await db.close()
+
+
+async def test_ingest_dim_mismatch_raises(tmp_path: Path) -> None:
+    from wikiforge.config.settings import write_default_config
+
+    home = tmp_path / "wiki"
+    home.mkdir()
+    (home / "topics").mkdir()
+    write_default_config(home, wiki_name="x")
+    db = await Database.open(home, dim=4)
+    await db.init_schema()
+    repo = Repository(db)
+    await repo.set_meta("embedding_dim", "384")  # wiki initialized for 384-dim
+    doc = tmp_path / "n.md"
+    doc.write_text("# H\n\nbody text", encoding="utf-8")
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(ValueError, match="embedding dimension"):
+            # FakeEmbedder.dim == 4, which != 384 -> guard trips
+            await ingest_source(home, str(doc), http_client=client, embedder=FakeEmbedder(), _db=db)
     await db.close()

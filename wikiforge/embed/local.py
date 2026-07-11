@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 
+from wikiforge.activity.cost import CostTracker
+
 
 class LocalEmbeddingProvider:
     """Embeds text with a local sentence-transformers model.
@@ -19,11 +21,13 @@ class LocalEmbeddingProvider:
         model: str,
         dim: int,
         encoder: Callable[[list[str]], list[list[float]]] | None = None,
+        cost_tracker: CostTracker | None = None,
     ) -> None:
         """Configure the provider; the sentence-transformers model loads lazily."""
         self._model = model
         self._dim = dim
         self._encoder = encoder
+        self._cost = cost_tracker
 
     @property
     def dim(self) -> int:
@@ -56,4 +60,13 @@ class LocalEmbeddingProvider:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Return one embedding per input text using the local model."""
         encoder = self._ensure_encoder()
-        return await asyncio.to_thread(encoder, texts)
+        vectors = await asyncio.to_thread(encoder, texts)
+        if self._cost is not None:
+            await self._cost.record(
+                provider="local",
+                model=self._model,
+                purpose="embed",
+                input_tokens=0,
+                output_tokens=0,
+            )
+        return vectors
