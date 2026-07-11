@@ -91,6 +91,11 @@ class Compiler:
         await index_owner(
             self._repo, self._embedder, owner_type="article", owner_id=article_id, text=markdown
         )
+
+        from wikiforge.graph.links import refresh_topic_links
+
+        await refresh_topic_links(self._repo, topic.id)
+
         await self._repo.set_topic_compiled(topic.id, datetime.now(UTC).isoformat())
         return article.model_copy(update={"id": article_id})
 
@@ -147,11 +152,16 @@ class Compiler:
             )
 
     async def _see_also(self, topic_id: int) -> list[tuple[str, str]]:
-        """Return related-topic (slug, title) pairs for the See-also section.
+        """Return (slug, title) pairs for this topic's graph neighbours (for the See-also block).
 
-        Stubbed to ``[]`` for now; the knowledge graph wiring happens in Task 7.
+        Called from ``render`` (via `compile_topic`'s call to `render_article_markdown`),
+        which runs *before* `refresh_topic_links` for the current compile — so a topic's
+        See-also reflects links from the previous compile pass. That is intentional and
+        fine: the graph converges as topics recompile.
         """
-        return []
+        from wikiforge.graph.links import related_topics
+
+        return [(t.slug, t.title) for t, _score in await related_topics(self._repo, topic_id)]
 
     def _write_markdown(self, slug: str, markdown: str) -> Path:
         """Write the rendered article to ``<home>/topics/<slug>/wiki/<slug>.md``."""

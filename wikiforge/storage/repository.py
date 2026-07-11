@@ -81,6 +81,20 @@ class Repository:
             stale_after_days=row["stale_after_days"],
         )
 
+    async def get_topic_by_id(self, topic_id: int) -> Topic | None:
+        """Return the topic with the given id, or ``None`` if absent."""
+        row = await self._q.get_topic_by_id(self._db.conn, id=topic_id)
+        if row is None:
+            return None
+        return Topic(
+            id=row["id"],
+            slug=row["slug"],
+            title=row["title"],
+            status=TopicStatus(row["status"]),
+            volatility=Volatility(row["volatility"]),
+            stale_after_days=row["stale_after_days"],
+        )
+
     async def get_raw_source_by_hash(self, content_hash: str) -> RawSource | None:
         """Return the raw source with the given content hash, or ``None``."""
         row = await self._q.get_raw_source_by_hash(self._db.conn, content_hash=content_hash)
@@ -532,3 +546,35 @@ class Repository:
         async with self._db.lock:
             await self._q.set_topic_compiled(self._db.conn, id=topic_id, at=at)
             await self._db.conn.commit()
+
+    async def article_chunk_vectors(self, article_id: int) -> list[list[float]]:
+        """Return the embedding vectors of an article's chunks."""
+        return [
+            [float(x) for x in json.loads(r["embedding"])]
+            async for r in self._q.article_chunk_vectors(self._db.conn, article_id=article_id)
+        ]
+
+    async def topic_ids_with_articles(self) -> list[int]:
+        """Return the ids of every topic that has at least one compiled article."""
+        return [int(r["topic_id"]) async for r in self._q.topic_ids_with_articles(self._db.conn)]
+
+    async def clear_topic_links(self, topic_id: int) -> None:
+        """Delete all stored similarity links originating from a topic."""
+        async with self._db.lock:
+            await self._q.clear_topic_links(self._db.conn, topic_id=topic_id)
+            await self._db.conn.commit()
+
+    async def upsert_topic_link(self, topic_id: int, related_topic_id: int, score: float) -> None:
+        """Store a scored similarity link from one topic to another."""
+        async with self._db.lock:
+            await self._q.insert_topic_link(
+                self._db.conn, topic_id=topic_id, related_topic_id=related_topic_id, score=score
+            )
+            await self._db.conn.commit()
+
+    async def topic_links(self, topic_id: int) -> list[tuple[int, float]]:
+        """Return a topic's stored similarity links as (related_topic_id, score) pairs."""
+        return [
+            (int(r["related_topic_id"]), float(r["score"]))
+            async for r in self._q.topic_links_for(self._db.conn, topic_id=topic_id)
+        ]
