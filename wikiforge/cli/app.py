@@ -362,6 +362,34 @@ def refresh(
             typer.echo(f"  {topic.slug} — {_overdue_text(topic)}")
 
 
+@app.command()
+def stats(
+    home: str | None = HomeOption,
+    since: str | None = typer.Option(
+        None, "--since", help="Only count LLM calls/cost at or after this date (YYYY-MM-DD)."
+    ),
+) -> None:
+    """Show wiki size (topics/articles/sources/sessions) and LLM spend."""
+    from wikiforge.services import run_stats
+
+    s = asyncio.run(run_stats(resolve_home(home), since=since))
+    typer.echo(f"Topics: {s.topics}   Articles: {s.articles}")
+    typer.echo(f"Raw sources: {s.raw_sources}   Research sessions: {s.sessions}")
+    typer.echo(f"Total LLM spend: ${s.total_cost_usd:.4f}")
+    for model, cost in sorted(s.cost_by_model.items()):
+        typer.echo(f"  {model}: ${cost:.4f}")
+    if s.since is not None:
+        typer.echo(f"Since {s.since}: {s.calls_since} call(s), ${s.cost_since_usd:.4f}")
+
+
+@app.command()
+def context(home: str | None = HomeOption) -> None:
+    """Print a recent-activity digest suitable for pasting into an agent's context."""
+    from wikiforge.services import run_context
+
+    typer.echo(asyncio.run(run_context(resolve_home(home))))
+
+
 def main() -> None:
     """Console-script entry point."""
     app()
