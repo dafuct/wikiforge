@@ -510,6 +510,17 @@ class Repository:
             )
             await self._db.conn.commit()
 
+    async def citation_count_for_article(self, article_id: int) -> int:
+        """Return how many citation rows exist for an article (0 if none)."""
+        row = await self._q.citation_count_for_article(self._db.conn, article_id=article_id)
+        return int(row["n"]) if row is not None else 0
+
+    async def update_article_body(self, article_id: int, body_md: str) -> None:
+        """Overwrite a stored article's ``body_md`` in place (used by :class:`WikiLinter`'s fix)."""
+        async with self._db.lock:
+            await self._q.update_article_body(self._db.conn, article_id=article_id, body_md=body_md)
+            await self._db.conn.commit()
+
     async def insert_conflict(
         self, topic_id: int, article_id: int, claim: str, nature: str, source_ids: list[int]
     ) -> None:

@@ -206,6 +206,29 @@ def query(
             typer.echo(f"  {source.owner_type}:{source.owner_id}#{source.seq}")
 
 
+@app.command()
+def lint(
+    home: str | None = HomeOption,
+    fix: bool = typer.Option(
+        False, "--fix", help="Apply safe auto-repairs (currently: strip broken wikilinks)."
+    ),
+) -> None:
+    """Audit the wiki for broken links, orphaned articles, missing citations, and staleness."""
+    from wikiforge.services import run_lint
+
+    target_home = resolve_home(home)
+    findings = asyncio.run(run_lint(target_home, fix=fix))
+    if not findings:
+        typer.echo("No issues found.")
+        return
+    for finding in findings:
+        typer.echo(f"{finding.kind}  {finding.topic_slug}  {finding.detail}")
+    typer.echo(f"\n{len(findings)} issue(s) found")
+    if fix:
+        fixed = sum(1 for f in findings if f.kind == "broken_wikilink")
+        typer.echo(f"Fixed {fixed} of them")
+
+
 def main() -> None:
     """Console-script entry point."""
     app()
