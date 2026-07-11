@@ -238,3 +238,32 @@ def test_cli_refresh_without_run_lists_stale_topics(tmp_path: Path) -> None:
     CliRunner().invoke(app, ["init", "demo", "--home", str(home)])
     result = CliRunner().invoke(app, ["refresh", "--home", str(home)])
     assert result.exit_code == 0
+
+
+def test_wiki_refresh_lists_stale_topics(tmp_path: Path) -> None:
+    import asyncio
+
+    from typer.testing import CliRunner
+
+    from wikiforge.cli.app import app
+    from wikiforge.config.settings import load_config
+    from wikiforge.embed.factory import effective_embedding_dim
+
+    home = tmp_path / "w"
+    CliRunner().invoke(app, ["init", "demo", "--home", str(home)])
+
+    async def _seed() -> None:
+        cfg = load_config(home)
+        db = await Database.open(home, dim=effective_embedding_dim(cfg))
+        try:
+            await Repository(db).upsert_topic(
+                Topic(slug="fresh-me", title="Fresh Me", stale_after_days=90)
+            )
+        finally:
+            await db.close()
+
+    asyncio.run(_seed())
+    result = CliRunner().invoke(app, ["refresh", "--home", str(home)])
+    assert result.exit_code == 0
+    assert "fresh-me" in result.stdout  # never-researched topic listed as stale
+    assert "stale" in result.stdout.lower()

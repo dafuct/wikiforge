@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -275,8 +276,6 @@ def feedback(
 
 def _overdue_text(topic: Topic) -> str:
     """Describe how overdue a stale ``Topic`` is, for the ``refresh`` listing."""
-    from datetime import UTC, datetime
-
     if topic.last_researched_at is None:
         return "never researched"
     last = topic.last_researched_at
@@ -298,12 +297,15 @@ def refresh(
     target_home = resolve_home(home)
     topics = asyncio.run(run_refresh(target_home, run=run))
     if not topics:
-        typer.echo("No stale topics.")
+        typer.echo("All topics are fresh.")
         return
-    for topic in topics:
-        typer.echo(f"{topic.slug}  {_overdue_text(topic)}")
     if run:
-        typer.echo(f"\nRe-researched {len(topics)} topic(s)")
+        slugs = ", ".join(t.slug for t in topics)
+        typer.echo(f"Re-researched {len(topics)} stale topic(s): {slugs}")
+    else:
+        typer.echo(f"{len(topics)} stale topic(s):")
+        for topic in topics:
+            typer.echo(f"  {topic.slug} — {_overdue_text(topic)}")
 
 
 def main() -> None:
