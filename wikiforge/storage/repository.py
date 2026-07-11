@@ -12,8 +12,16 @@ from pathlib import Path
 
 import aiosql
 
-from wikiforge.models.domain import ActivityEntry, EmbeddingCacheEntry, LlmCall, RawSource, Topic
-from wikiforge.models.enums import SourceType, TopicStatus, Volatility
+from wikiforge.models.domain import (
+    ActivityEntry,
+    EmbeddingCacheEntry,
+    LlmCall,
+    RawSource,
+    ResearchFinding,
+    ResearchSession,
+    Topic,
+)
+from wikiforge.models.enums import SessionStatus, SourceType, TopicStatus, Volatility
 from wikiforge.storage.db import Database
 
 # ``mandatory_parameters=False``: the installed aiosql (15.x) otherwise requires
@@ -258,3 +266,80 @@ class Repository:
         async with self._db.lock:
             await self._q.insert_chunk_vector(self._db.conn, rowid=rowid, embedding=literal)
             await self._db.conn.commit()
+
+    async def create_research_session(self, session: ResearchSession) -> int:
+        """Insert a research session and return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_research_session(
+                self._db.conn,
+                topic_id=session.topic_id,
+                thesis_claim=session.thesis_claim,
+                mode=session.mode,
+                status=str(session.status),
+                budget_usd=session.budget_usd,
+                spend_usd=session.spend_usd,
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def get_research_session(self, session_id: int) -> ResearchSession | None:
+        """Fetch a research session by id."""
+        row = await self._q.get_research_session(self._db.conn, id=session_id)
+        if row is None:
+            return None
+        return ResearchSession(
+            id=row["id"],
+            topic_id=row["topic_id"],
+            thesis_claim=row["thesis_claim"],
+            mode=row["mode"],
+            status=SessionStatus(row["status"]),
+            budget_usd=row["budget_usd"],
+            spend_usd=row["spend_usd"],
+            started_at=row["started_at"],
+            ended_at=row["ended_at"],
+        )
+
+    async def update_session(
+        self,
+        session_id: int,
+        *,
+        status: SessionStatus | None = None,
+        spend_usd: float | None = None,
+        ended_at: str | None = None,
+    ) -> None:
+        """Update a session's status/spend/ended_at (only the fields provided)."""
+        async with self._db.lock:
+            await self._q.update_research_session(
+                self._db.conn,
+                id=session_id,
+                status=str(status) if status is not None else None,
+                spend_usd=spend_usd,
+                ended_at=ended_at,
+            )
+            await self._db.conn.commit()
+
+    async def add_finding(self, finding: ResearchFinding) -> int:
+        """Insert a persona-tagged research finding and return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_finding(
+                self._db.conn,
+                session_id=finding.session_id,
+                persona=finding.persona,
+                raw_source_id=finding.raw_source_id,
+                summary=finding.summary,
+                stance=str(finding.stance),
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def personas_with_findings(self, session_id: int) -> set[str]:
+        """Return the persona names that already produced a finding for a session."""
+        return {
+            str(r["persona"])
+            async for r in self._q.personas_with_findings(self._db.conn, session_id=session_id)
+        }
+
+    async def session_spend(self, session_id: int) -> float:
+        """Return the accumulated LLM spend for a session (USD)."""
+        row = await self._q.session_spend(self._db.conn, session_id=session_id)
+        return float(row["spend"])
