@@ -10,12 +10,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import pytest
 
 from wikiforge.models.domain import Article, Topic
-from wikiforge.models.enums import FeedbackVerdict
+from wikiforge.models.enums import FeedbackVerdict, TopicStatus
 from wikiforge.ops.feedback import FeedbackStore
 from wikiforge.ops.freshness import refresh_topics, stale_topics
+from wikiforge.ops.inventory import add_dataset, archive_topic, collect
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
 
@@ -267,3 +269,126 @@ def test_wiki_refresh_lists_stale_topics(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "fresh-me" in result.stdout  # never-researched topic listed as stale
     assert "stale" in result.stdout.lower()
+
+
+# --- Datasets (Task 7) ---------------------------------------------------------
+
+
+async def test_add_dataset_records_name_path_and_bytes(repo: Repository, tmp_path: Path) -> None:
+    data_file = tmp_path / "data.csv"
+    data_file.write_bytes(b"a,b,c\n1,2,3\n")
+
+    dataset = await add_dataset(repo, "my-data", data_file)
+
+    assert dataset.id is not None and dataset.id > 0
+    assert dataset.name == "my-data"
+    assert dataset.path == str(data_file)
+    assert dataset.bytes == data_file.stat().st_size == len(b"a,b,c\n1,2,3\n")
+
+
+# --- Archive (Task 7) ------------------------------------------------------------
+
+
+async def test_archive_topic_sets_status_archived(repo: Repository) -> None:
+    await repo.upsert_topic(
+        Topic(slug="old-topic", title="Old Topic", status=TopicStatus.ACTIVE, stale_after_days=90)
+    )
+
+    archived = await archive_topic(repo, "old-topic")
+
+    assert archived.status is TopicStatus.ARCHIVED
+    reloaded = await repo.get_topic("old-topic")
+    assert reloaded is not None
+    assert reloaded.status is TopicStatus.ARCHIVED
+
+
+async def test_archive_unknown_topic_raises(repo: Repository) -> None:
+    with pytest.raises(ValueError, match="unknown"):
+        await archive_topic(repo, "does-not-exist")
+
+
+# --- Collect / inventory (Task 7) -------------------------------------------------
+
+
+async def test_collect_file_target_records_inventory_item_linked_to_raw_source(
+    repo: Repository, wiki_home: Path
+) -> None:
+    doc = wiki_home / "tool-notes.txt"
+    doc.write_text("A note about a handy CLI tool.", encoding="utf-8")
+
+    async with httpx.AsyncClient() as client:
+        item = await collect(repo, wiki_home, "tools", str(doc), http_client=client)
+
+    assert item.id is not None and item.id > 0
+    assert item.collection_name == "tools"
+    assert item.kind == "file"
+    assert item.name == doc.name
+    assert item.source_id is not None
+
+    listed = await repo.list_inventory("tools")
+    assert [i.id for i in listed] == [item.id]
+    assert listed[0].source_id == item.source_id
+
+
+# --- Archive + retrieval integration (Task 7, confirms Task 2 coverage) --------------
+
+
+async def test_archived_topic_excluded_from_retrieval(wiki_home: Path) -> None:
+    """Short confirmation that archiving flows into retrieval exclusion (full coverage: Task 2)."""
+    from wikiforge.config.settings import load_config, write_default_config
+    from wikiforge.search.index import index_owner
+    from wikiforge.search.retriever import HybridRetriever
+
+    class _KeywordEmbedder:
+        @property
+        def dim(self) -> int:
+            return 4
+
+        @property
+        def model(self) -> str:
+            return "kw"
+
+        @property
+        def provider_name(self) -> str:
+            return "kw"
+
+        async def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0 if "gizmo" in t.lower() else 0.0, 0.1, 0.1, 0.1] for t in texts]
+
+    write_default_config(wiki_home, wiki_name="x")
+    cfg = load_config(wiki_home)
+    db = await Database.open(wiki_home, dim=4)
+    await db.init_schema()
+    repo = Repository(db)
+    embedder = _KeywordEmbedder()
+
+    topic_id = await repo.upsert_topic(
+        Topic(slug="archived-integration", title="Archived Integration", stale_after_days=90)
+    )
+    article_id = await repo.insert_article(
+        Article(
+            topic_id=topic_id,
+            slug="archived-integration",
+            title="Archived Integration",
+            body_md="# Archived Integration\n\nThe gizmo widget does a thing.",
+            path="topics/archived-integration/wiki/archived-integration.md",
+            confidence=0.9,
+            compile_digest="d",
+            version=1,
+        )
+    )
+    await index_owner(
+        repo,
+        embedder,
+        owner_type="article",
+        owner_id=article_id,
+        text="# Archived Integration\n\nThe gizmo widget does a thing.",
+    )
+
+    await archive_topic(repo, "archived-integration")
+
+    retriever = HybridRetriever(repo, embedder, cfg)
+    hits = await retriever.retrieve("gizmo widget", depth="quick")
+    assert all("gizmo" not in h.text.lower() for h in hits)
+
+    await db.close()

@@ -16,6 +16,8 @@ app = typer.Typer(
     help="wikiforge — compile a personal knowledge base.",
     no_args_is_help=True,
 )
+dataset_app = typer.Typer(name="dataset", help="Manage tracked datasets.", no_args_is_help=True)
+app.add_typer(dataset_app, name="dataset")
 
 HomeOption = typer.Option(None, "--home", help="Wiki home directory (default: ~/wiki).")
 
@@ -80,6 +82,20 @@ def ingest(
     title, created = asyncio.run(_run())
     verb = "Ingested" if created else "Re-ingested (dedup)"
     typer.echo(f"{verb}: {title}")
+
+
+@app.command()
+def collect(
+    collection_name: str = typer.Argument(..., help="Named collection to catalogue this item in."),
+    target: str = typer.Argument(..., help="URL, PDF path, or text file to collect."),
+    home: str | None = HomeOption,
+) -> None:
+    """Catalogue a URL/PDF/file into a named inventory collection (not indexed for search)."""
+    from wikiforge.services import run_collect
+
+    target_home = resolve_home(home)
+    item = asyncio.run(run_collect(target_home, collection_name, target))
+    typer.echo(f"Collected {item.name!r} ({item.kind}) into collection {item.collection_name!r}")
 
 
 ModeOption = typer.Option("standard", "--mode", help="Research breadth: standard, deep, or max.")
@@ -272,6 +288,37 @@ def feedback(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from None
     typer.echo(f"Recorded feedback #{feedback_id} ({action}) on {target}")
+
+
+@app.command()
+def archive(
+    topic: str = typer.Argument(..., help="Topic slug to archive."),
+    home: str | None = HomeOption,
+) -> None:
+    """Archive a topic, excluding it from the default query/retrieval scope."""
+    from wikiforge.services import run_archive
+
+    target_home = resolve_home(home)
+    try:
+        result = asyncio.run(run_archive(target_home, topic))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Archived topic {result.slug!r} ({result.title})")
+
+
+@dataset_app.command("add")
+def dataset_add(
+    name: str = typer.Argument(..., help="Dataset name."),
+    path: str = typer.Argument(..., help="Path to the dataset file."),
+    home: str | None = HomeOption,
+) -> None:
+    """Record an on-disk dataset's name, path, and byte size."""
+    from wikiforge.services import run_dataset_add
+
+    target_home = resolve_home(home)
+    dataset = asyncio.run(run_dataset_add(target_home, name, Path(path)))
+    typer.echo(f"Added dataset {dataset.name!r}: {dataset.path} ({dataset.bytes} bytes)")
 
 
 def _overdue_text(topic: Topic) -> str:

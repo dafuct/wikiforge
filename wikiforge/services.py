@@ -22,7 +22,15 @@ from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.ingest import sources as ingest_sources
 from wikiforge.lint.auditor import AuditFinding, WikiAuditor
 from wikiforge.lint.linter import LintFinding, WikiLinter
-from wikiforge.models.domain import Article, RawSource, ResearchSession, ThesisVerdict, Topic
+from wikiforge.models.domain import (
+    Article,
+    Dataset,
+    InventoryItem,
+    RawSource,
+    ResearchSession,
+    ThesisVerdict,
+    Topic,
+)
 from wikiforge.models.enums import QueryDepth
 from wikiforge.query.service import QueryResult
 from wikiforge.search.index import index_owner
@@ -63,6 +71,20 @@ def detect_target_kind(target: str) -> str:
     return "file"
 
 
+async def build_raw_source(target: str, *, http_client: httpx.AsyncClient) -> RawSource:
+    """Classify ``target`` and build its (not-yet-persisted) ``RawSource`` via the M2 adapters.
+
+    Shared by :func:`ingest_source` and :func:`wikiforge.ops.inventory.collect` so both
+    entry points use identical URL/PDF/file classification and extraction.
+    """
+    kind = detect_target_kind(target)
+    if kind == "url":
+        return await ingest_sources.ingest_url(target, client=http_client)
+    if kind == "pdf":
+        return ingest_sources.ingest_pdf(Path(target))
+    return ingest_sources.ingest_file(Path(target))
+
+
 async def ingest_source(
     home: Path,
     target: str,
@@ -83,12 +105,7 @@ async def ingest_source(
     from ``home`` and closed on exit.
     """
     kind = detect_target_kind(target)
-    if kind == "url":
-        source = await ingest_sources.ingest_url(target, client=http_client)
-    elif kind == "pdf":
-        source = ingest_sources.ingest_pdf(Path(target))
-    else:
-        source = ingest_sources.ingest_file(Path(target))
+    source = await build_raw_source(target, http_client=http_client)
 
     db = _db or await Database.open(home, dim=embedder.dim)
     try:
@@ -405,5 +422,58 @@ async def run_audit(home: Path, slug: str) -> list[AuditFinding]:
         repo = Repository(db)
         auditor = WikiAuditor(repo)
         return await auditor.audit_topic(slug)
+    finally:
+        await db.close()
+
+
+async def run_collect(home: Path, collection_name: str, target: str) -> InventoryItem:
+    """Ingest ``target`` into a named inventory collection.
+
+    Builds a real ``httpx.AsyncClient`` and delegates to
+    :func:`wikiforge.ops.inventory.collect`, which reuses the same M2 classification
+    and adapters as :func:`ingest_source` but only catalogues the result (no chunk
+    indexing), keeping collected items out of the default query search scope.
+    """
+    from wikiforge.ops.inventory import collect
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        async with httpx.AsyncClient() as client:
+            return await collect(repo, home, collection_name, target, http_client=client)
+    finally:
+        await db.close()
+
+
+async def run_dataset_add(home: Path, name: str, path: Path) -> Dataset:
+    """Record an on-disk dataset's name, path, and byte size.
+
+    Delegates to :func:`wikiforge.ops.inventory.add_dataset`.
+    """
+    from wikiforge.ops.inventory import add_dataset
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        return await add_dataset(repo, name, path)
+    finally:
+        await db.close()
+
+
+async def run_archive(home: Path, slug: str) -> Topic:
+    """Archive a topic by slug, excluding it from the default query/retrieval scope.
+
+    Delegates to :func:`wikiforge.ops.inventory.archive_topic`, which raises
+    ``ValueError`` for an unknown slug.
+    """
+    from wikiforge.ops.inventory import archive_topic
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        return await archive_topic(repo, slug)
     finally:
         await db.close()

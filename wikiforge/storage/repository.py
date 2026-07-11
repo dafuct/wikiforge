@@ -16,8 +16,10 @@ import aiosql
 from wikiforge.models.domain import (
     ActivityEntry,
     Article,
+    Dataset,
     EmbeddingCacheEntry,
     Feedback,
+    InventoryItem,
     LlmCall,
     RawSource,
     ResearchFinding,
@@ -719,3 +721,47 @@ class Repository:
                 )
             )
         return targets
+
+    async def insert_inventory_item(self, item: InventoryItem) -> int:
+        """Insert a catalogued inventory item and return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_inventory_item(
+                self._db.conn,
+                collection_name=item.collection_name,
+                kind=item.kind,
+                name=item.name,
+                data=json.dumps(item.data),
+                source_id=item.source_id,
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def list_inventory(self, collection_name: str) -> list[InventoryItem]:
+        """Return the catalogued items in a named collection, oldest first."""
+        return [
+            InventoryItem(
+                id=r["id"],
+                collection_name=r["collection_name"],
+                kind=r["kind"],
+                name=r["name"],
+                data=json.loads(r["data"]),
+                source_id=r["source_id"],
+                created_at=r["created_at"],
+            )
+            async for r in self._q.list_inventory(self._db.conn, collection_name=collection_name)
+        ]
+
+    async def insert_dataset(self, dataset: Dataset) -> int:
+        """Insert a tracked on-disk dataset row and return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_dataset(
+                self._db.conn, name=dataset.name, path=dataset.path, bytes=dataset.bytes
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def set_topic_status(self, slug: str, status: TopicStatus) -> None:
+        """Update a topic's lifecycle status by slug."""
+        async with self._db.lock:
+            await self._q.set_topic_status(self._db.conn, slug=slug, status=str(status))
+            await self._db.conn.commit()
