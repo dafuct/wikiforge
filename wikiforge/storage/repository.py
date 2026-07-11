@@ -96,7 +96,8 @@ class Repository:
                     self._db.conn, provenance=provenance, content_hash=source.content_hash
                 )
                 await self._db.conn.commit()
-                assert existing.id is not None
+                if existing.id is None:
+                    raise RuntimeError("existing raw source has no id")
                 return existing.id, False
             row = await self._q.insert_raw_source(
                 self._db.conn,
