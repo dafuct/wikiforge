@@ -68,17 +68,24 @@ class Exporter:
     async def _export_obsidian(self, out: Path) -> None:
         pairs = await self._topic_articles()
         for topic, article in pairs:
-            frontmatter = (
-                "---\n"
-                f"title: {topic.title}\n"
-                f"slug: {topic.slug}\n"
-                f"confidence: {article.confidence}\n"
-                f"status: {topic.status}\n"
-                "---\n\n"
-            )
-            (out / f"{topic.slug}.md").write_text(frontmatter + article.body_md, encoding="utf-8")
-        moc = ["# " + self._wiki_name, ""] + [f"- [[{t.slug}|{t.title}]]" for t, _ in pairs]
+            fields = {
+                "title": topic.title,
+                "slug": topic.slug,
+                "confidence": article.confidence,
+                "status": str(topic.status),
+            }
+            lines = ["---"] + [f"{k}: {json.dumps(v)}" for k, v in fields.items()] + ["---", ""]
+            body = "\n".join(lines) + article.body_md
+            (out / f"{topic.slug}.md").write_text(body, encoding="utf-8")
+        moc = ["# " + self._wiki_name, ""] + [
+            f"- [[{t.slug}|{self._safe_alias(t.title)}]]" for t, _ in pairs
+        ]
         (out / "index.md").write_text("\n".join(moc) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _safe_alias(title: str) -> str:
+        """Strip characters that would break an Obsidian ``[[slug|alias]]`` wikilink."""
+        return title.replace("]", "").replace("|", " ")
 
     async def _export_site(self, out: Path) -> None:
         pairs = await self._topic_articles()

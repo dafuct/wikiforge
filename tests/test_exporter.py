@@ -53,10 +53,46 @@ async def test_export_obsidian_writes_markdown_with_frontmatter(
     await Exporter(repo).export(ExportTarget.OBSIDIAN, out)
     note = (out / "rust-async.md").read_text(encoding="utf-8")
     assert note.startswith("---")  # YAML frontmatter
-    assert "title: Rust Async" in note
+    assert 'title: "Rust Async"' in note
     assert "confidence: 0.7" in note
     assert "Rust async is cooperative" in note
     assert (out / "index.md").exists()  # map-of-content
+
+
+async def test_export_obsidian_colon_in_title_is_valid_frontmatter(
+    wiki_home: Path, tmp_path: Path
+) -> None:
+    from wikiforge.config.settings import load_config, write_default_config
+    from wikiforge.models.domain import Article, Topic
+    from wikiforge.storage.db import Database
+    from wikiforge.storage.repository import Repository
+
+    write_default_config(wiki_home, wiki_name="x")
+    load_config(wiki_home)
+    db = await Database.open(wiki_home, dim=4)
+    await db.init_schema()
+    repo = Repository(db)
+    tid = await repo.upsert_topic(
+        Topic(slug="rust", title="Rust: Async Programming", stale_after_days=90)
+    )
+    await repo.insert_article(
+        Article(
+            topic_id=tid,
+            slug="rust",
+            title="Rust: Async Programming",
+            body_md="Body.",
+            path="topics/rust/wiki/rust.md",
+            confidence=0.5,
+            compile_digest="d",
+            version=1,
+        )
+    )
+    out = tmp_path / "vault"
+    await Exporter(repo).export(ExportTarget.OBSIDIAN, out)
+    note = (out / "rust.md").read_text(encoding="utf-8")
+    # The colon-containing title is emitted as a quoted (valid-YAML) scalar.
+    assert 'title: "Rust: Async Programming"' in note
+    await db.close()
 
 
 async def test_export_site_writes_html_and_css(wiki_home: Path, tmp_path: Path) -> None:
@@ -72,3 +108,6 @@ async def test_export_site_writes_html_and_css(wiki_home: Path, tmp_path: Path) 
     # HTML is escaped (no markdown lib): angle brackets in body must not inject markup.
     topic_html = (out / "rust-async.html").read_text(encoding="utf-8")
     assert "Rust async is cooperative" in topic_html
+    # style.css is actually linked from the pages, and article HTML is escaped.
+    assert 'href="style.css"' in index
+    assert 'href="style.css"' in topic_html
