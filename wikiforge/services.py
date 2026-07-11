@@ -20,6 +20,7 @@ from wikiforge.config.settings import (
 from wikiforge.embed.factory import effective_embedding_dim
 from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.ingest import sources as ingest_sources
+from wikiforge.lint.auditor import AuditFinding, WikiAuditor
 from wikiforge.lint.linter import LintFinding, WikiLinter
 from wikiforge.models.domain import Article, RawSource, ResearchSession, ThesisVerdict, Topic
 from wikiforge.models.enums import QueryDepth
@@ -322,5 +323,23 @@ async def run_lint(home: Path, *, fix: bool) -> list[LintFinding]:
         if fix:
             await linter.fix(findings)
         return findings
+    finally:
+        await db.close()
+
+
+async def run_audit(home: Path, slug: str) -> list[AuditFinding]:
+    """Re-verify a topic's citation quotes against their immutable raw sources.
+
+    Resolves the topic by slug and delegates to
+    :meth:`~wikiforge.lint.auditor.WikiAuditor.audit_topic`, which raises
+    ``ValueError`` for an unknown slug. Returns an empty list when no citation
+    drift is found.
+    """
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        auditor = WikiAuditor(repo)
+        return await auditor.audit_topic(slug)
     finally:
         await db.close()

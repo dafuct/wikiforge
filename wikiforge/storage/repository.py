@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 
 import aiosql
@@ -44,6 +45,16 @@ from wikiforge.storage.db import Database
 _QUERIES = aiosql.from_path(
     Path(__file__).parent / "queries", "aiosqlite", mandatory_parameters=False
 )
+
+
+@dataclass
+class CitationSource:
+    """A stored citation joined with the text of its cited (immutable) raw source."""
+
+    claim: str
+    quote: str | None
+    raw_source_id: int
+    source_text: str
 
 
 class Repository:
@@ -514,6 +525,22 @@ class Repository:
         """Return how many citation rows exist for an article (0 if none)."""
         row = await self._q.citation_count_for_article(self._db.conn, article_id=article_id)
         return int(row["n"]) if row is not None else 0
+
+    async def citations_with_source_for_topic(self, topic_id: int) -> list[CitationSource]:
+        """Return a topic's latest-article citations joined with their cited source's text.
+
+        Used by :class:`~wikiforge.lint.auditor.WikiAuditor` to re-verify that each
+        citation's ``quote`` still appears in its (immutable) raw source.
+        """
+        return [
+            CitationSource(
+                claim=r["claim"],
+                quote=r["quote"],
+                raw_source_id=int(r["raw_source_id"]),
+                source_text=r["source_text"],
+            )
+            async for r in self._q.citations_with_source_for_topic(self._db.conn, topic_id=topic_id)
+        ]
 
     async def update_article_body(self, article_id: int, body_md: str) -> None:
         """Overwrite a stored article's ``body_md`` in place (used by :class:`WikiLinter`'s fix)."""

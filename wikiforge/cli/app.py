@@ -229,6 +229,28 @@ def lint(
         typer.echo(f"Fixed {fixed} of them")
 
 
+@app.command()
+def audit(
+    topic: str = typer.Argument(..., help="Topic slug to audit for citation drift."),
+    home: str | None = HomeOption,
+) -> None:
+    """Re-verify a topic's citations still match their (immutable) raw sources."""
+    from wikiforge.services import run_audit
+
+    target_home = resolve_home(home)
+    try:
+        findings = asyncio.run(run_audit(target_home, topic))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    if not findings:
+        typer.echo("No citation drift found.")
+        return
+    for finding in findings:
+        typer.echo(f"{finding.claim} -> source {finding.raw_source_id}: {finding.issue}")
+    typer.echo(f"\n{len(findings)} issue(s) found")
+
+
 def main() -> None:
     """Console-script entry point."""
     app()
