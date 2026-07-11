@@ -59,6 +59,7 @@ class EmbeddingConfig(BaseModel):
     voyage_model: str
     local_model: str
     dim: int
+    local_dim: int
 
 
 class RetrievalConfig(BaseModel):

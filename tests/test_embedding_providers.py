@@ -83,3 +83,30 @@ async def test_factory_voyage_forced_without_key_raises(wiki_home: Path) -> None
     with pytest.raises(ValueError, match="VOYAGE_API_KEY"):
         build_embedding_provider(cfg, Repository(db), env={})
     await db.close()
+
+
+def test_effective_dim_matches_selected_provider(wiki_home: Path) -> None:
+    from wikiforge.embed.factory import effective_embedding_dim
+
+    write_default_config(wiki_home, wiki_name="x")
+    cfg = load_config(wiki_home)
+    assert effective_embedding_dim(cfg, env={"VOYAGE_API_KEY": "k"}) == cfg.embedding.dim
+    assert effective_embedding_dim(cfg, env={}) == cfg.embedding.local_dim
+    assert cfg.embedding.local_dim == 384
+
+
+async def test_provider_dim_agrees_with_effective_dim(wiki_home: Path) -> None:
+    from wikiforge.embed.factory import effective_embedding_dim
+
+    write_default_config(wiki_home, wiki_name="x")
+    cfg = load_config(wiki_home)
+    db = await Database.open(wiki_home, dim=cfg.embedding.local_dim)
+    await db.init_schema()
+    repo = Repository(db)
+    local = build_embedding_provider(cfg, repo, env={})
+    assert local.dim == effective_embedding_dim(cfg, env={}) == 384
+    voyage = build_embedding_provider(cfg, repo, env={"VOYAGE_API_KEY": "k"})
+    assert (
+        voyage.dim == effective_embedding_dim(cfg, env={"VOYAGE_API_KEY": "k"}) == cfg.embedding.dim
+    )
+    await db.close()
