@@ -194,3 +194,56 @@ class Repository:
                 vector=blob,
             )
             await self._db.conn.commit()
+
+    async def rowids_for_owner(self, owner_type: str, owner_id: int) -> list[int]:
+        """Return the chunk rowids belonging to an owner.
+
+        ``rowids_for_owner`` is a no-suffix aiosql query, which the aiosqlite
+        adapter returns as an async generator — consume it with ``async for``,
+        matching the existing ``recent_activity`` / ``cost_by_model`` pattern in
+        this repository (a plain ``await`` raises ``TypeError``).
+        """
+        return [
+            int(r["rowid"])
+            async for r in self._q.rowids_for_owner(
+                self._db.conn, owner_type=owner_type, owner_id=owner_id
+            )
+        ]
+
+    async def delete_chunks_for_owner(self, owner_type: str, owner_id: int) -> None:
+        """Delete an owner's vector rows (by rowid) then its chunk rows.
+
+        FTS rows are removed by the ``chunks`` delete trigger; ``chunks_vec`` has
+        no trigger, so its rows are deleted explicitly first to avoid orphans.
+        """
+        rowids = await self.rowids_for_owner(owner_type, owner_id)
+        async with self._db.lock:
+            for rowid in rowids:
+                await self._q.delete_chunk_vector(self._db.conn, rowid=rowid)
+            await self._q.delete_chunks_for_owner(
+                self._db.conn, owner_type=owner_type, owner_id=owner_id
+            )
+            await self._db.conn.commit()
+
+    async def insert_chunk(
+        self, owner_type: str, owner_id: int, seq: int, text: str, content_hash: str
+    ) -> int:
+        """Insert one chunk row and return its rowid (FTS is trigger-synced)."""
+        async with self._db.lock:
+            row = await self._q.insert_chunk(
+                self._db.conn,
+                owner_type=owner_type,
+                owner_id=owner_id,
+                seq=seq,
+                text=text,
+                content_hash=content_hash,
+            )
+            await self._db.conn.commit()
+        return int(row["rowid"])
+
+    async def insert_chunk_vector(self, rowid: int, vector: list[float]) -> None:
+        """Insert a chunk's embedding into the vec0 table (JSON-array literal)."""
+        literal = "[" + ",".join(repr(float(x)) for x in vector) + "]"
+        async with self._db.lock:
+            await self._q.insert_chunk_vector(self._db.conn, rowid=rowid, embedding=literal)
+            await self._db.conn.commit()
