@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from wikiforge.llm.provider import LLMProvider
@@ -9,6 +10,23 @@ from wikiforge.search.retriever import HybridRetriever
 from wikiforge.search.rrf import ChunkTarget
 
 NO_RESULTS_ANSWER = "No relevant information found in the wiki."
+
+_ENVELOPE_TAG_RE = re.compile(r"<(/?)source_data", re.IGNORECASE)
+
+
+def _seal(text: str) -> str:
+    """Neutralize any literal ``<source_data>`` envelope delimiters in chunk text.
+
+    On a ``deep`` query, retrieved ``raw_source`` chunks are arbitrary web/PDF
+    text and therefore attacker-controllable. Wrapping such text verbatim would
+    let a chunk containing a literal ``</source_data>`` close the data envelope
+    early and smuggle instructions into the prompt. We defang the delimiter by
+    swapping its ``<`` for U+2039 (‹) so the token stays readable but can no
+    longer be parsed as our envelope tag; ordinary angle brackets (e.g. ``<div>``
+    in a code snippet) are untouched.
+    """
+    return _ENVELOPE_TAG_RE.sub(lambda m: "‹" + m.group(0)[1:], text)
+
 
 _SYSTEM_PROMPT = (
     "You answer questions about the wiki's contents using only the excerpts provided "
@@ -51,7 +69,7 @@ async def answer_query(
         return QueryResult(answer=NO_RESULTS_ANSWER, sources=[])
 
     context = "\n\n".join(
-        f"<source_data id='{s.owner_type}:{s.owner_id}#{s.seq}'>{s.text}</source_data>"
+        f"<source_data id='{s.owner_type}:{s.owner_id}#{s.seq}'>{_seal(s.text)}</source_data>"
         for s in sources
     )
     user = f"Question: {query}\n\nWiki excerpts:\n{context}"

@@ -94,7 +94,11 @@ def collect(
     from wikiforge.services import run_collect
 
     target_home = resolve_home(home)
-    item = asyncio.run(run_collect(target_home, collection_name, target))
+    try:
+        item = asyncio.run(run_collect(target_home, collection_name, target))
+    except OSError as exc:
+        typer.echo(f"Error: cannot read {target!r}: {exc}", err=True)
+        raise typer.Exit(code=1) from None
     typer.echo(f"Collected {item.name!r} ({item.kind}) into collection {item.collection_name!r}")
 
 
@@ -235,7 +239,7 @@ def lint(
     from wikiforge.services import run_lint
 
     target_home = resolve_home(home)
-    findings = asyncio.run(run_lint(target_home, fix=fix))
+    findings, fixed = asyncio.run(run_lint(target_home, fix=fix))
     if not findings:
         typer.echo("No issues found.")
         return
@@ -243,7 +247,6 @@ def lint(
         typer.echo(f"{finding.kind}  {finding.topic_slug}  {finding.detail}")
     typer.echo(f"\n{len(findings)} issue(s) found")
     if fix:
-        fixed = sum(1 for f in findings if f.kind == "broken_wikilink")
         typer.echo(f"Fixed {fixed} of them")
 
 
@@ -317,7 +320,11 @@ def dataset_add(
     from wikiforge.services import run_dataset_add
 
     target_home = resolve_home(home)
-    dataset = asyncio.run(run_dataset_add(target_home, name, Path(path)))
+    try:
+        dataset = asyncio.run(run_dataset_add(target_home, name, Path(path)))
+    except OSError as exc:
+        typer.echo(f"Error: cannot read {path!r}: {exc}", err=True)
+        raise typer.Exit(code=1) from None
     typer.echo(f"Added dataset {dataset.name!r}: {dataset.path} ({dataset.bytes} bytes)")
 
 
