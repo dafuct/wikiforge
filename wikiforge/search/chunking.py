@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_HEADING = re.compile(r"^#{1,6}\s", re.MULTILINE)
+_HEADING_LINE = re.compile(r"^#{1,6}\s")
+_FENCE = re.compile(r"^\s*(?:```|~~~)")
 
 
 @dataclass
@@ -22,14 +23,26 @@ def estimate_tokens(text: str) -> int:
 
 
 def _split_sections(text: str) -> list[str]:
-    """Split text into sections that each begin at a markdown heading."""
-    indices = [m.start() for m in _HEADING.finditer(text)]
-    if not indices or indices[0] != 0:
-        indices = [0, *indices]
+    """Split text into sections that each begin at a markdown heading.
+
+    Headings inside fenced code blocks (``` or ~~~) are ignored, so a ``#``
+    comment in a code sample does not create a false section boundary.
+    """
+    lines = text.splitlines(keepends=True)
+    boundaries: list[int] = []
+    in_fence = False
+    for i, line in enumerate(lines):
+        if _FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if not in_fence and _HEADING_LINE.match(line):
+            boundaries.append(i)
+    if not boundaries or boundaries[0] != 0:
+        boundaries = [0, *boundaries]
     sections: list[str] = []
-    for i, start in enumerate(indices):
-        end = indices[i + 1] if i + 1 < len(indices) else len(text)
-        section = text[start:end].strip()
+    for j, start in enumerate(boundaries):
+        end = boundaries[j + 1] if j + 1 < len(boundaries) else len(lines)
+        section = "".join(lines[start:end]).strip()
         if section:
             sections.append(section)
     return sections or ([text.strip()] if text.strip() else [])
@@ -50,6 +63,7 @@ def chunk_markdown(
     exceed ``target_tokens``; the previous chunk's trailing ``overlap_tokens``
     are prepended to the next chunk for context continuity.
     """
+    overlap_tokens = max(0, min(overlap_tokens, target_tokens // 2))
     sections = _split_sections(text)
     chunks: list[str] = []
     current = ""
