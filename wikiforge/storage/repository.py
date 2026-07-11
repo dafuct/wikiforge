@@ -7,11 +7,12 @@ records and query parameters, and enforces raw-source dedup by content hash.
 from __future__ import annotations
 
 import json
+import struct
 from pathlib import Path
 
 import aiosql
 
-from wikiforge.models.domain import ActivityEntry, LlmCall, RawSource, Topic
+from wikiforge.models.domain import ActivityEntry, EmbeddingCacheEntry, LlmCall, RawSource, Topic
 from wikiforge.models.enums import SourceType, TopicStatus, Volatility
 from wikiforge.storage.db import Database
 
@@ -166,3 +167,30 @@ class Repository:
                 )
             )
         return entries
+
+    async def get_embedding(
+        self, content_hash: str, provider: str, model: str
+    ) -> list[float] | None:
+        """Return a cached embedding vector, or None on a miss."""
+        row = await self._q.get_embedding(
+            self._db.conn, content_hash=content_hash, provider=provider, model=model
+        )
+        if row is None:
+            return None
+        blob: bytes = row["vector"]
+        count = len(blob) // 4
+        return list(struct.unpack(f"<{count}f", blob))
+
+    async def put_embedding(self, entry: EmbeddingCacheEntry) -> None:
+        """Store an embedding vector as little-endian float32 bytes."""
+        blob = struct.pack(f"<{len(entry.vector)}f", *entry.vector)
+        async with self._db.lock:
+            await self._q.put_embedding(
+                self._db.conn,
+                content_hash=entry.content_hash,
+                provider=entry.provider,
+                model=entry.model,
+                dim=entry.dim,
+                vector=blob,
+            )
+            await self._db.conn.commit()
