@@ -34,15 +34,28 @@ class ClaudeCodeError(RuntimeError):
     """A `claude -p` invocation failed or returned an unusable result."""
 
 
+_DEFAULT_TIMEOUT_S = 300.0  # a single `claude -p` call (research + web search) can be slow
+
+
 async def _default_runner(argv: list[str], stdin_text: str) -> str:
     """Run `claude` as a subprocess, feeding the prompt on stdin; return its stdout."""
-    proc = await asyncio.create_subprocess_exec(
-        *argv,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    out, err = await proc.communicate(stdin_text.encode())
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:  # e.g. `claude` not on PATH
+        raise ClaudeCodeError(f"could not launch claude: {exc}") from exc
+    try:
+        out, err = await asyncio.wait_for(
+            proc.communicate(stdin_text.encode()), timeout=_DEFAULT_TIMEOUT_S
+        )
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise ClaudeCodeError(f"claude timed out after {_DEFAULT_TIMEOUT_S:.0f}s") from None
     if proc.returncode != 0:
         raise ClaudeCodeError(
             f"claude exited {proc.returncode}: {err.decode(errors='replace')[:500]}"
@@ -168,8 +181,8 @@ class ClaudeCodeProvider:
             f"{system}\n\nRespond with ONLY a single JSON object that validates against this "
             f"JSON Schema. No markdown, no code fences, no prose:\n{schema_json}"
         )
-        env = await self._run(model_id, sys_json, user, web_search=False)
         try:
+            env = await self._run(model_id, sys_json, user, web_search=False)
             parsed = schema.model_validate_json(_extract_json(str(env.get("result", ""))))
         except (ValidationError, ClaudeCodeError) as first_err:
             retry_user = (
