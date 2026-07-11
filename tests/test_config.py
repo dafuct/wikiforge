@@ -49,6 +49,14 @@ def test_model_for_task_resolves_tier(wiki_home: Path) -> None:
     assert cfg.model_for_task("extract") == "claude-haiku-4-5"
 
 
+def test_model_for_task_tier_override(wiki_home: Path) -> None:
+    write_default_config(wiki_home, wiki_name="x")
+    cfg = load_config(wiki_home)
+    assert cfg.model_for_task("normalize") == "claude-haiku-4-5"  # map -> cheap
+    assert cfg.model_for_task("normalize", tier="flagship") == "claude-sonnet-5"  # override wins
+    assert cfg.model_for_task("research", tier="cheap") == "claude-haiku-4-5"  # override wins
+
+
 def test_personas_for_mode(wiki_home: Path) -> None:
     write_default_config(wiki_home, wiki_name="x")
     cfg = load_config(wiki_home)

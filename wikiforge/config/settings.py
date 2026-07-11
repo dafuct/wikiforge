@@ -113,10 +113,14 @@ class Config(BaseModel):
     research: ResearchConfig
     confidence: ConfidenceConfig
 
-    def model_for_task(self, task: str) -> str:
-        """Resolve a task name to a concrete model ID via the tier map."""
-        tier = self.models.tasks.get(task, "flagship")
-        return self.models.flagship if tier == "flagship" else self.models.cheap
+    def model_for_task(self, task: str, tier: str | None = None) -> str:
+        """Resolve a task (and optional explicit tier override) to a model ID.
+
+        An explicit ``tier`` ("cheap"/"flagship") wins; otherwise the tier comes
+        from the task->tier map (defaulting to "flagship").
+        """
+        resolved_tier = tier or self.models.tasks.get(task, "flagship")
+        return self.models.flagship if resolved_tier == "flagship" else self.models.cheap
 
     def personas_for_mode(self, mode: str) -> list[str]:
         """Return the ordered persona list for a research mode."""
