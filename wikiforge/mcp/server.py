@@ -124,6 +124,9 @@ def build_server(home: Path) -> FastMCP:
             "sessions": s.sessions,
             "total_cost_usd": s.total_cost_usd,
             "cost_by_model": s.cost_by_model,
+            "since": s.since,
+            "calls_since": s.calls_since,
+            "cost_since_usd": s.cost_since_usd,
         }
 
     @mcp.tool

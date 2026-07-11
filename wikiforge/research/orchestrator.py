@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 from wikiforge.config.settings import Config
 from wikiforge.llm.provider import LLMProvider
+from wikiforge.llm.safety import seal_source_data
 from wikiforge.models.domain import RawSource, ResearchFinding, ResearchSession, ThesisVerdict
 from wikiforge.models.enums import SessionStatus, SourceType, Stance
 from wikiforge.models.schemas import ResearchFindingOut, ThesisVerdictOut
@@ -147,7 +148,7 @@ class ResearchOrchestrator:
         blocks = (
             "\n\n".join(
                 f"<source_data id='{e.source_id}' stance='{e.stance}' persona='{e.persona}'>"
-                f"{e.source_text}</source_data>"
+                f"{seal_source_data(e.source_text)}</source_data>"
                 for e in evidence
             )
             or "(no evidence gathered)"
@@ -254,7 +255,7 @@ class ResearchOrchestrator:
             normalized = await self._llm.parse(
                 "normalize",
                 "Normalize this research finding into the schema.",
-                f"<source_data>{completion.text}</source_data>",
+                f"<source_data>{seal_source_data(completion.text)}</source_data>",
                 tier="cheap",
                 schema=ResearchFindingOut,
                 session_id=session_id,

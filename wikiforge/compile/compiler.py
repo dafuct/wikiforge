@@ -13,6 +13,7 @@ from wikiforge.compile.render import render_article_markdown
 from wikiforge.config.settings import Config
 from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.llm.provider import LLMProvider
+from wikiforge.llm.safety import seal_source_data
 from wikiforge.models.domain import Article, Feedback, RawSource, Topic
 from wikiforge.models.schemas import CompiledArticle
 from wikiforge.search.index import index_owner
@@ -108,7 +109,8 @@ class Compiler:
     ) -> CompiledArticle:
         """Call the flagship LLM (no tools) to synthesize a structured article."""
         blocks = "\n\n".join(
-            f"<source_data id='{s.content_hash}'>{s.text}</source_data>" for s in sources
+            f"<source_data id='{s.content_hash}'>{seal_source_data(s.text)}</source_data>"
+            for s in sources
         )
         fb = "\n".join(f"- ({f.verdict}) {f.note}" for f in feedback) or "(none)"
         system = (
