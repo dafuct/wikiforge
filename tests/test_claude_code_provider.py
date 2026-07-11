@@ -84,6 +84,7 @@ async def test_complete_parses_envelope_and_records_cost(wiki_home: Path) -> Non
         # cost row recorded under the claude-code provider
         assert await repo.cost_totals_by_model()  # non-empty
         assert "WebSearch" not in argv  # no tools on a plain completion
+        assert "--effort" in argv and "low" in argv  # keep Claude Code responsive
         assert "claude-sonnet-5" in await repo.cost_totals_by_model()  # recorded under the model
     finally:
         await db.close()

@@ -96,11 +96,16 @@ class ClaudeCodeProvider:
     def _argv(self, model_id: str, system: str, *, web_search: bool) -> list[str]:
         # --allowedTools is variadic (consumes until the next flag), so keep it LAST.
         tools = ["WebSearch", "WebFetch"] if web_search else [""]
+        # --effort low: Claude Code defaults to high effort, whose deep thinking makes
+        # heavy structured-output calls (compile) run for minutes and hit the timeout.
+        # Low effort keeps the subscription path responsive (compile drops from >5min to ~20s).
         return [
             "claude",
             "-p",
             "--output-format",
             "json",
+            "--effort",
+            "low",
             "--model",
             _cli_model(model_id),
             "--system-prompt",
