@@ -327,6 +327,70 @@ async def run_lint(home: Path, *, fix: bool) -> list[LintFinding]:
         await db.close()
 
 
+def _parse_feedback_target(target: str) -> tuple[str, int]:
+    """Parse a ``<type>:<id>`` feedback target, defaulting to ``article`` for a bare id."""
+    if ":" in target:
+        kind, _, raw_id = target.partition(":")
+        return kind, int(raw_id)
+    return "article", int(target)
+
+
+async def run_feedback(home: Path, target: str, action: str, note: str) -> int:
+    """Record a feedback verdict against an article or finding target.
+
+    ``target`` is ``article:<id>`` or ``finding:<id>``; a bare integer defaults
+    to ``article:<id>``. ``action`` is ``approve``, ``reject``, or ``correct``,
+    mapped to :class:`~wikiforge.models.enums.FeedbackVerdict`. Returns the new
+    feedback row's id.
+    """
+    from wikiforge.models.enums import FeedbackVerdict
+    from wikiforge.ops.feedback import FeedbackStore
+
+    target_type, target_id = _parse_feedback_target(target)
+    verdict = FeedbackVerdict(action)
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        store = FeedbackStore(repo)
+        return await store.record(target_type, target_id, verdict, note)
+    finally:
+        await db.close()
+
+
+async def run_refresh(home: Path, *, run: bool) -> list[Topic]:
+    """List (or, when ``run``, re-research) topics whose freshness window has lapsed.
+
+    Builds the real ``AnthropicProvider``/``ResearchOrchestrator`` only when
+    ``run`` is set — a plain listing needs no network access, so ``--run``-less
+    calls never construct one.
+    """
+    from datetime import UTC, datetime
+
+    from wikiforge.ops.freshness import refresh_topics, stale_topics
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        now = datetime.now(UTC)
+        if not run:
+            return await stale_topics(repo, now=now)
+
+        from anthropic import AsyncAnthropic
+
+        from wikiforge.activity.cost import CostTracker
+        from wikiforge.llm.anthropic_provider import AnthropicProvider
+        from wikiforge.research.orchestrator import ResearchOrchestrator
+
+        llm = AnthropicProvider(AsyncAnthropic(), CostTracker(repo, cfg), cfg)
+        orch = ResearchOrchestrator(llm, repo, cfg)
+        return await refresh_topics(orch, repo, now=now, run=True)
+    finally:
+        await db.close()
+
+
 async def run_audit(home: Path, slug: str) -> list[AuditFinding]:
     """Re-verify a topic's citation quotes against their immutable raw sources.
 

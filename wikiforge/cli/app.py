@@ -7,6 +7,7 @@ from pathlib import Path
 
 import typer
 
+from wikiforge.models.domain import Topic
 from wikiforge.paths import resolve_home
 
 app = typer.Typer(
@@ -249,6 +250,60 @@ def audit(
     for finding in findings:
         typer.echo(f"{finding.claim} -> source {finding.raw_source_id}: {finding.issue}")
     typer.echo(f"\n{len(findings)} issue(s) found")
+
+
+@app.command()
+def feedback(
+    target: str = typer.Argument(
+        ..., help="Feedback target: article:<id> or finding:<id> (bare id defaults to article)."
+    ),
+    action: str = typer.Argument(..., help="Verdict: approve, reject, or correct."),
+    note: str = typer.Argument("", help="Free-text note explaining the verdict."),
+    home: str | None = HomeOption,
+) -> None:
+    """Record a feedback verdict against a compiled article or research finding."""
+    from wikiforge.services import run_feedback
+
+    target_home = resolve_home(home)
+    try:
+        feedback_id = asyncio.run(run_feedback(target_home, target, action, note))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Recorded feedback #{feedback_id} ({action}) on {target}")
+
+
+def _overdue_text(topic: Topic) -> str:
+    """Describe how overdue a stale ``Topic`` is, for the ``refresh`` listing."""
+    from datetime import UTC, datetime
+
+    if topic.last_researched_at is None:
+        return "never researched"
+    last = topic.last_researched_at
+    last = last if last.tzinfo is not None else last.replace(tzinfo=UTC)
+    age_days = (datetime.now(UTC) - last).days
+    return f"last researched {age_days}d ago (stale after {topic.stale_after_days}d)"
+
+
+@app.command()
+def refresh(
+    home: str | None = HomeOption,
+    run: bool = typer.Option(
+        False, "--run", help="Re-research each stale topic instead of only listing it."
+    ),
+) -> None:
+    """List topics whose freshness window has lapsed; with --run, re-research them."""
+    from wikiforge.services import run_refresh
+
+    target_home = resolve_home(home)
+    topics = asyncio.run(run_refresh(target_home, run=run))
+    if not topics:
+        typer.echo("No stale topics.")
+        return
+    for topic in topics:
+        typer.echo(f"{topic.slug}  {_overdue_text(topic)}")
+    if run:
+        typer.echo(f"\nRe-researched {len(topics)} topic(s)")
 
 
 def main() -> None:

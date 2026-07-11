@@ -91,6 +91,9 @@ class Repository:
             status=TopicStatus(row["status"]),
             volatility=Volatility(row["volatility"]),
             stale_after_days=row["stale_after_days"],
+            last_researched_at=row["last_researched_at"],
+            last_compiled_at=row["last_compiled_at"],
+            created_at=row["created_at"],
         )
 
     async def get_topic_by_id(self, topic_id: int) -> Topic | None:
@@ -105,6 +108,9 @@ class Repository:
             status=TopicStatus(row["status"]),
             volatility=Volatility(row["volatility"]),
             stale_after_days=row["stale_after_days"],
+            last_researched_at=row["last_researched_at"],
+            last_compiled_at=row["last_compiled_at"],
+            created_at=row["created_at"],
         )
 
     async def get_raw_source_by_hash(self, content_hash: str) -> RawSource | None:
@@ -646,6 +652,48 @@ class Repository:
         return [
             int(r["rowid"]) async for r in search(self._db.conn, query_vector=literal, limit=limit)
         ]
+
+    async def insert_feedback(self, feedback: Feedback) -> int:
+        """Insert a user feedback row and return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_feedback(
+                self._db.conn,
+                target_type=feedback.target_type,
+                target_id=feedback.target_id,
+                verdict=str(feedback.verdict),
+                note=feedback.note,
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def list_stale_topics(self, now_iso: str) -> list[Topic]:
+        """Return ACTIVE topics whose freshness window has lapsed as of ``now_iso``.
+
+        A topic is stale when it has never been researched
+        (``last_researched_at IS NULL``) or its last research is older than its
+        ``stale_after_days`` window, per the ``julianday`` date math in
+        ``list_stale_topics`` (``ops.sql``).
+        """
+        return [
+            Topic(
+                id=r["id"],
+                slug=r["slug"],
+                title=r["title"],
+                status=TopicStatus(r["status"]),
+                volatility=Volatility(r["volatility"]),
+                stale_after_days=r["stale_after_days"],
+                last_researched_at=r["last_researched_at"],
+                last_compiled_at=r["last_compiled_at"],
+                created_at=r["created_at"],
+            )
+            async for r in self._q.list_stale_topics(self._db.conn, now=now_iso)
+        ]
+
+    async def set_topic_researched(self, topic_id: int, at: str) -> None:
+        """Stamp a topic's ``last_researched_at`` timestamp."""
+        async with self._db.lock:
+            await self._q.set_topic_researched(self._db.conn, id=topic_id, at=at)
+            await self._db.conn.commit()
 
     async def chunk_targets(self, rowids: list[int]) -> list[ChunkTarget]:
         """Resolve chunk rowids to their owner and (if any) topic.
