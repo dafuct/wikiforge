@@ -32,7 +32,8 @@ from wikiforge.models.domain import (
     ThesisVerdict,
     Topic,
 )
-from wikiforge.models.enums import QueryDepth
+from wikiforge.models.enums import OutputKind, QueryDepth
+from wikiforge.output.generator import OutputGenerator
 from wikiforge.query.service import QueryResult
 from wikiforge.search.index import index_owner
 from wikiforge.storage.db import Database
@@ -140,6 +141,21 @@ async def ingest_source(
 def slugify(text: str) -> str:
     """Return a URL/filesystem-safe slug: lowercase, non-alphanumerics collapsed to hyphens."""
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+async def _resolve_topic(repo: Repository, ref: str) -> Topic:
+    """Resolve a topic by slug, falling back to a case-insensitive title match.
+
+    Raises ``ValueError`` when no topic matches ``ref``.
+    """
+    topic = await repo.get_topic(ref)
+    if topic is not None:
+        return topic
+    wanted = ref.strip().lower()
+    for candidate in await repo.list_topics():
+        if candidate.title.strip().lower() == wanted:
+            return candidate
+    raise ValueError(f"unknown topic {ref!r}")
 
 
 async def run_research(
@@ -320,6 +336,41 @@ async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
         return await answer_query(llm, retriever, query, depth=depth)
     finally:
         await db.close()
+
+
+async def run_generate(home: Path, kind: str, topic: str, *, out: Path | None) -> str:
+    """Generate a derived document (report/summary/...) for a topic's latest article.
+
+    ``kind`` must be an :class:`~wikiforge.models.enums.OutputKind` value. Resolves
+    the topic (slug or title), loads its latest compiled article, and runs the
+    flagship :class:`~wikiforge.output.generator.OutputGenerator`. Writes the text to
+    ``out`` when given; always returns it. Raises ``ValueError`` for an unknown
+    topic, an invalid kind, or a topic with no compiled article.
+    """
+    from anthropic import AsyncAnthropic
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.llm.anthropic_provider import AnthropicProvider
+
+    output_kind = OutputKind(kind)  # raises ValueError on a bad kind
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        resolved = await _resolve_topic(repo, topic)
+        assert resolved.id is not None
+        article = await repo.latest_article_for_topic(resolved.id)
+        if article is None:
+            raise ValueError(f"topic {resolved.slug!r} has no compiled article; run `wiki compile`")
+        llm = AnthropicProvider(AsyncAnthropic(), CostTracker(repo, cfg), cfg)
+        text = await OutputGenerator(llm).generate(
+            output_kind, topic_title=resolved.title, article_body=article.body_md
+        )
+    finally:
+        await db.close()
+    if out is not None:
+        out.write_text(text, encoding="utf-8")
+    return text
 
 
 async def run_lint(home: Path, *, fix: bool) -> tuple[list[LintFinding], int]:
