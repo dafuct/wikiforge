@@ -34,6 +34,7 @@ from wikiforge.models.enums import (
     Volatility,
 )
 from wikiforge.research.context import SessionEvidence
+from wikiforge.search.rrf import ChunkTarget
 from wikiforge.storage.db import Database
 
 # ``mandatory_parameters=False``: the installed aiosql (15.x) otherwise requires
@@ -578,3 +579,57 @@ class Repository:
             (int(r["related_topic_id"]), float(r["score"]))
             async for r in self._q.topic_links_for(self._db.conn, topic_id=topic_id)
         ]
+
+    async def fts_search(self, query: str, owner_types: list[str], limit: int) -> list[int]:
+        """Return chunk rowids matching an FTS5 query, best BM25 match first.
+
+        Picks the ``_articles``-scoped query when ``owner_types == ["article"]``,
+        else the unscoped query over all owner types (static SQL, no dynamic
+        ``IN (:list)`` interpolation).
+        """
+        search = (
+            self._q.fts_search_articles if owner_types == ["article"] else self._q.fts_search_all
+        )
+        return [int(r["rowid"]) async for r in search(self._db.conn, query=query, limit=limit)]
+
+    async def vec_search(
+        self, query_vector: list[float], owner_types: list[str], limit: int
+    ) -> list[int]:
+        """Return chunk rowids by KNN search on the query vector, nearest first.
+
+        Binds the query vector as a JSON-array string literal, the same form
+        used by :meth:`insert_chunk_vector`. Picks the ``_articles``-scoped
+        query when ``owner_types == ["article"]``, else the unscoped query.
+        """
+        literal = "[" + ",".join(repr(float(x)) for x in query_vector) + "]"
+        search = (
+            self._q.vec_search_articles if owner_types == ["article"] else self._q.vec_search_all
+        )
+        return [
+            int(r["rowid"]) async for r in search(self._db.conn, query_vector=literal, limit=limit)
+        ]
+
+    async def chunk_targets(self, rowids: list[int]) -> list[ChunkTarget]:
+        """Resolve chunk rowids to their owner and (if any) topic.
+
+        Article chunks resolve to their topic's id/status; raw_source chunks
+        (including finding chunks and unattached raw sources) get
+        ``topic_id=None, topic_status=None`` — Task 2 treats ``None`` as active.
+        """
+        targets: list[ChunkTarget] = []
+        for rowid in rowids:
+            row = await self._q.chunk_target(self._db.conn, rowid=rowid)
+            if row is None:
+                continue
+            targets.append(
+                ChunkTarget(
+                    rowid=int(row["rowid"]),
+                    owner_type=row["owner_type"],
+                    owner_id=int(row["owner_id"]),
+                    seq=int(row["seq"]),
+                    text=row["text"],
+                    topic_id=row["topic_id"],
+                    topic_status=row["topic_status"],
+                )
+            )
+        return targets
