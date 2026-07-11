@@ -31,3 +31,9 @@ RETURNING id;
 
 -- name: get_thesis_verdict^
 SELECT * FROM thesis_verdicts WHERE session_id = :session_id;
+
+-- name: findings_with_text_for_session
+SELECT rs.id AS source_id, rf.persona AS persona, rf.stance AS stance, rs.text AS source_text
+FROM research_findings rf
+JOIN raw_sources rs ON rs.id = rf.raw_source_id
+WHERE rf.session_id = :session_id;

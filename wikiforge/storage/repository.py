@@ -23,6 +23,7 @@ from wikiforge.models.domain import (
     Topic,
 )
 from wikiforge.models.enums import SessionStatus, SourceType, TopicStatus, Verdict, Volatility
+from wikiforge.research.context import SessionEvidence
 from wikiforge.storage.db import Database
 
 # ``mandatory_parameters=False``: the installed aiosql (15.x) otherwise requires
@@ -359,6 +360,20 @@ class Repository:
             )
             await self._db.conn.commit()
         return int(row["id"])
+
+    async def findings_with_text_for_session(self, session_id: int) -> list[SessionEvidence]:
+        """Return a session's findings joined with their source text (for thesis synthesis)."""
+        return [
+            SessionEvidence(
+                source_id=int(r["source_id"]),
+                persona=str(r["persona"]),
+                stance=str(r["stance"]),
+                source_text=str(r["source_text"]),
+            )
+            async for r in self._q.findings_with_text_for_session(
+                self._db.conn, session_id=session_id
+            )
+        ]
 
     async def get_thesis_verdict(self, session_id: int) -> ThesisVerdict | None:
         """Fetch the thesis verdict for a session."""

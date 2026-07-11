@@ -21,6 +21,16 @@ SESSION_CTX: contextvars.ContextVar[SessionContext | None] = contextvars.Context
 
 
 @dataclass
+class SessionEvidence:
+    """A gathered finding joined with its source text, for thesis synthesis."""
+
+    source_id: int
+    persona: str
+    stance: str
+    source_text: str
+
+
+@dataclass
 class AgentResult:
     """The outcome of one persona agent — never an exception.
 
