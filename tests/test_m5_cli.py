@@ -9,6 +9,22 @@ from typer.testing import CliRunner
 from wikiforge.cli.app import app
 
 
+def test_cli_query_subscription_without_claude_errors_cleanly(tmp_path: Path, monkeypatch) -> None:
+    # With the subscription backend but no `claude` on PATH, the factory raises a
+    # clear ValueError; the CLI must render it as an error + non-zero exit, not a traceback.
+    home = tmp_path / "w"
+    CliRunner().invoke(app, ["init", "demo", "--home", str(home)])
+    cfg = home / "config.toml"
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace('backend = "api"', 'backend = "subscription"'),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("wikiforge.llm.factory.shutil.which", lambda _: None)
+    result = CliRunner().invoke(app, ["query", "anything", "--home", str(home)])
+    assert result.exit_code != 0
+    assert "claude" in result.output.lower()
+
+
 def test_cli_stats_on_empty_wiki(tmp_path: Path) -> None:
     home = tmp_path / "w"
     CliRunner().invoke(app, ["init", "demo", "--home", str(home)])

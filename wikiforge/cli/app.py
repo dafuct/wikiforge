@@ -157,7 +157,11 @@ def compile(
     from wikiforge.services import run_compile
 
     target_home = resolve_home(home)
-    articles = asyncio.run(run_compile(target_home, full=full))
+    try:
+        articles = asyncio.run(run_compile(target_home, full=full))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
     if not articles:
         typer.echo("Nothing to compile.")
         return
@@ -202,7 +206,11 @@ def query(
     from wikiforge.services import run_query
 
     target_home = resolve_home(home)
-    result = asyncio.run(run_query(target_home, question, depth=depth))
+    try:
+        result = asyncio.run(run_query(target_home, question, depth=depth))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
     typer.echo(result.answer)
     if result.sources:
         typer.echo("\nSources:")
@@ -356,7 +364,11 @@ def refresh(
     from wikiforge.services import run_refresh
 
     target_home = resolve_home(home)
-    topics = asyncio.run(run_refresh(target_home, run=run))
+    try:
+        topics = asyncio.run(run_refresh(target_home, run=run))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
     if not topics:
         typer.echo("All topics are fresh.")
         return
