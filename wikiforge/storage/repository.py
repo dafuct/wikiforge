@@ -206,6 +206,21 @@ class Repository:
             totals[row["model"]] = float(row["total"])
         return totals
 
+    async def entity_counts(self) -> dict[str, int]:
+        """Return row counts for topics, articles, raw_sources, and research_sessions."""
+        row = await self._q.entity_counts(self._db.conn)
+        return {
+            "topics": int(row["topics"]),
+            "articles": int(row["articles"]),
+            "raw_sources": int(row["raw_sources"]),
+            "sessions": int(row["sessions"]),
+        }
+
+    async def cost_and_calls_since(self, since_iso: str) -> tuple[int, float]:
+        """Return (llm call count, summed cost_usd) for calls at or after ``since_iso``."""
+        row = await self._q.cost_and_calls_since(self._db.conn, since=since_iso)
+        return int(row["calls"]), float(row["cost"])
+
     async def recent_activity(self, limit: int) -> list[ActivityEntry]:
         """Return the most recent activity rows, newest first, as domain records."""
         entries: list[ActivityEntry] = []

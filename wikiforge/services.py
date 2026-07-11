@@ -12,6 +12,7 @@ from pathlib import Path
 import httpx
 
 from wikiforge.activity.recorder import ActivityRecorder
+from wikiforge.activity.stats import StatsService, WikiStats
 from wikiforge.config.settings import (
     CONFIG_FILENAME,
     load_config,
@@ -476,5 +477,25 @@ async def run_archive(home: Path, slug: str) -> Topic:
     try:
         repo = Repository(db)
         return await archive_topic(repo, slug)
+    finally:
+        await db.close()
+
+
+async def run_stats(home: Path, *, since: str | None) -> WikiStats:
+    """Compute a wiki-wide stats snapshot (counts + cost totals, optional since window)."""
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        return await StatsService(Repository(db)).compute(since=since)
+    finally:
+        await db.close()
+
+
+async def run_context(home: Path, *, limit: int = 20) -> str:
+    """Render the recent-activity digest (the `wiki context` CLAUDE.md-style summary)."""
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        return await ActivityRecorder(Repository(db)).context_digest(limit)
     finally:
         await db.close()
