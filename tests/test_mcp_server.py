@@ -40,3 +40,17 @@ async def test_list_topics_and_search_offline(wiki_home: Path) -> None:
         # Empty wiki -> query short-circuits with no LLM call (no network).
         answer = await client.call_tool("search_knowledge", {"question": "anything"})
         assert "no" in str(answer.data).lower()
+
+
+async def test_get_stats_reports_since_window(wiki_home: Path) -> None:
+    await init_wiki("demo", wiki_home)
+    server = build_server(wiki_home)
+    async with Client(server) as client:
+        # Without since: windowed fields are null.
+        base = (await client.call_tool("get_stats", {})).data
+        assert base["since"] is None and base["calls_since"] is None
+        # With since: window is reported (empty wiki -> zero calls).
+        windowed = (await client.call_tool("get_stats", {"since": "2000-01-01"})).data
+        assert windowed["since"] == "2000-01-01"
+        assert windowed["calls_since"] == 0
+        assert windowed["cost_since_usd"] == 0.0

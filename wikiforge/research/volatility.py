@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from wikiforge.config.settings import Config
 from wikiforge.llm.provider import LLMProvider
+from wikiforge.llm.safety import seal_source_data
 from wikiforge.models.enums import Volatility
 from wikiforge.models.schemas import VolatilityInference
 
@@ -17,7 +18,7 @@ async def infer_volatility(llm: LLMProvider, title: str, config: Config) -> tupl
         "extract",
         "Classify how quickly knowledge about a topic becomes stale: LOW (stable, ~yearly), "
         "MEDIUM (~quarterly), or HIGH (fast-moving, ~biweekly).",
-        f"<source_data>{title}</source_data>",
+        f"<source_data>{seal_source_data(title)}</source_data>",
         tier="cheap",
         schema=VolatilityInference,
     )
