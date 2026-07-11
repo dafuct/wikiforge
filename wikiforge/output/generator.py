@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from wikiforge.llm.provider import LLMProvider
+from wikiforge.llm.safety import seal_source_data
 from wikiforge.models.enums import OutputKind
 
 _PROMPTS: dict[OutputKind, str] = {
@@ -56,6 +57,7 @@ class OutputGenerator:
         model's generated text.
         """
         system = _PROMPTS[kind] + _INJECTION_NOTE
-        user = f"Topic: {topic_title}\n\n<source_data>{article_body}</source_data>"
+        sealed_body = seal_source_data(article_body)
+        user = f"Topic: {topic_title}\n\n<source_data>{sealed_body}</source_data>"
         result = await self._llm.complete("generate", system, user, tier="flagship")
         return result.text
