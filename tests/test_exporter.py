@@ -40,9 +40,78 @@ async def test_export_json_dumps_topics_and_articles(wiki_home: Path, tmp_path: 
     out = tmp_path / "exp"
     await Exporter(repo).export(ExportTarget.JSON, out)
     data = json.loads((out / "wiki.json").read_text(encoding="utf-8"))
-    assert {"topics", "articles", "conflicts", "topic_links"} <= data.keys()
+    assert {
+        "topics",
+        "articles",
+        "citations",
+        "conflicts",
+        "topic_links",
+        "inventory",
+        "datasets",
+    } <= data.keys()
     assert data["topics"][0]["slug"] == "rust-async"
     assert data["articles"][0]["title"] == "Rust Async"
+
+
+async def test_export_json_includes_citations_inventory_and_datasets(
+    wiki_home: Path, tmp_path: Path
+) -> None:
+    from datetime import UTC, datetime
+
+    from wikiforge.models.domain import Dataset, InventoryItem, RawSource
+    from wikiforge.models.enums import SourceType
+
+    write_default_config(wiki_home, wiki_name="x")
+    load_config(wiki_home)
+    db = await Database.open(wiki_home, dim=4)
+    await db.init_schema()
+    repo = Repository(db)
+    tid = await repo.upsert_topic(Topic(slug="t", title="T", stale_after_days=90))
+    aid = await repo.insert_article(
+        Article(
+            topic_id=tid,
+            slug="t",
+            title="T",
+            body_md="A cited claim.",
+            path="topics/t/wiki/t.md",
+            confidence=0.6,
+            compile_digest="d",
+            version=1,
+        )
+    )
+    src_id, _ = await repo.ingest_raw_source(
+        RawSource(
+            content_hash="h1",
+            source_type=SourceType.FILE,
+            title="src",
+            text="The source says a cited claim is true.",
+            fetched_at=datetime.now(UTC),
+        )
+    )
+    await repo.insert_citation(
+        article_id=aid, claim_text="A cited claim.", raw_source_id=src_id, quote="a cited claim"
+    )
+    await repo.insert_inventory_item(
+        InventoryItem(collection_name="tools", kind="file", name="handy-cli", source_id=src_id)
+    )
+    await repo.insert_dataset(Dataset(name="census", path="/data/census.csv", bytes=2048))
+
+    out = tmp_path / "exp"
+    await Exporter(repo).export(ExportTarget.JSON, out)
+    data = json.loads((out / "wiki.json").read_text(encoding="utf-8"))
+
+    assert data["citations"] == [
+        {
+            "topic_slug": "t",
+            "claim": "A cited claim.",
+            "quote": "a cited claim",
+            "raw_source_id": src_id,
+        }
+    ]
+    assert [i["name"] for i in data["inventory"]] == ["handy-cli"]
+    assert [d["name"] for d in data["datasets"]] == ["census"]
+    assert data["datasets"][0]["bytes"] == 2048
+    await db.close()
 
 
 async def test_export_obsidian_writes_markdown_with_frontmatter(
