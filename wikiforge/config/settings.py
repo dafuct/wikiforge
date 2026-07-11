@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from wikiforge.config.defaults import DEFAULT_CONFIG_TOML
+from wikiforge.models.enums import LlmBackend
 
 CONFIG_FILENAME = "config.toml"
 
@@ -99,6 +100,14 @@ class ConfidenceConfig(BaseModel):
     conflict_penalty_cap: float
 
 
+class LlmConfig(BaseModel):
+    """Which backend serves LLM calls: the Anthropic API or the Claude subscription."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backend: LlmBackend = LlmBackend.API
+
+
 class Config(BaseModel):
     """The fully parsed ``config.toml``."""
 
@@ -113,6 +122,7 @@ class Config(BaseModel):
     retrieval: RetrievalConfig
     research: ResearchConfig
     confidence: ConfidenceConfig
+    llm: LlmConfig = LlmConfig()
 
     def model_for_task(self, task: str, tier: str | None = None) -> str:
         """Resolve a task (and optional explicit tier override) to a model ID.
