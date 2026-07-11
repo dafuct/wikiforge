@@ -782,6 +782,35 @@ class Repository:
             async for r in self._q.list_inventory(self._db.conn, collection_name=collection_name)
         ]
 
+    async def list_all_inventory(self) -> list[InventoryItem]:
+        """Return every catalogued inventory item across all collections, oldest first."""
+        return [
+            InventoryItem(
+                id=r["id"],
+                collection_name=r["collection_name"],
+                kind=r["kind"],
+                name=r["name"],
+                data=json.loads(r["data"]),
+                source_id=r["source_id"],
+                created_at=r["created_at"],
+            )
+            async for r in self._q.list_all_inventory(self._db.conn)
+        ]
+
+    async def list_datasets(self) -> list[Dataset]:
+        """Return every tracked dataset, oldest first."""
+        return [
+            Dataset(
+                id=r["id"],
+                name=r["name"],
+                path=r["path"],
+                summary_article_id=r["summary_article_id"],
+                bytes=r["bytes"],
+                created_at=r["created_at"],
+            )
+            async for r in self._q.list_datasets(self._db.conn)
+        ]
+
     async def insert_dataset(self, dataset: Dataset) -> int:
         """Insert a tracked on-disk dataset row and return its id."""
         async with self._db.lock:

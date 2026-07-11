@@ -50,18 +50,31 @@ class Exporter:
         pairs = await self._topic_articles()
         conflicts: list[dict[str, object]] = []
         links: list[dict[str, object]] = []
+        citations: list[dict[str, object]] = []
         for topic, _ in pairs:
             assert topic.id is not None
             for c in await self._repo.conflicts_for_topic(topic.id):
                 conflicts.append(c.model_dump(mode="json"))
             for related_id, score in await self._repo.topic_links(topic.id):
                 links.append({"topic_id": topic.id, "related_topic_id": related_id, "score": score})
+            for cit in await self._repo.citations_with_source_for_topic(topic.id):
+                citations.append(
+                    {
+                        "topic_slug": topic.slug,
+                        "claim": cit.claim,
+                        "quote": cit.quote,
+                        "raw_source_id": cit.raw_source_id,
+                    }
+                )
         data = {
             "wiki_name": self._wiki_name,
             "topics": [t.model_dump(mode="json") for t, _ in pairs],
             "articles": [a.model_dump(mode="json") for _, a in pairs],
+            "citations": citations,
             "conflicts": conflicts,
             "topic_links": links,
+            "inventory": [i.model_dump(mode="json") for i in await self._repo.list_all_inventory()],
+            "datasets": [d.model_dump(mode="json") for d in await self._repo.list_datasets()],
         }
         (out / "wiki.json").write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 

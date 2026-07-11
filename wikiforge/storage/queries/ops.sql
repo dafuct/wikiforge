@@ -31,6 +31,12 @@ RETURNING id;
 -- name: list_inventory
 SELECT * FROM inventory_items WHERE collection_name = :collection_name ORDER BY id;
 
+-- name: list_all_inventory
+SELECT * FROM inventory_items ORDER BY id;
+
+-- name: list_datasets
+SELECT * FROM datasets ORDER BY id;
+
 -- name: insert_dataset^
 INSERT INTO datasets (name, path, bytes)
 VALUES (:name, :path, :bytes)
