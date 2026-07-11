@@ -16,6 +16,7 @@ import aiosql
 from wikiforge.models.domain import (
     ActivityEntry,
     Article,
+    Conflict,
     Dataset,
     EmbeddingCacheEntry,
     Feedback,
@@ -585,6 +586,21 @@ class Repository:
                 source_ids=json.dumps(source_ids),
             )
             await self._db.conn.commit()
+
+    async def conflicts_for_topic(self, topic_id: int) -> list[Conflict]:
+        """Return all detected conflicts for a topic, oldest first."""
+        return [
+            Conflict(
+                id=r["id"],
+                topic_id=r["topic_id"],
+                article_id=r["article_id"],
+                claim=r["claim"],
+                nature=r["nature"],
+                source_ids=json.loads(r["source_ids"]) if r["source_ids"] else [],
+                detected_at=r["detected_at"],
+            )
+            async for r in self._q.conflicts_for_topic(self._db.conn, topic_id=topic_id)
+        ]
 
     async def list_topics(self, status: TopicStatus = TopicStatus.ACTIVE) -> list[Topic]:
         """Return topics with the given lifecycle status, ordered by id."""

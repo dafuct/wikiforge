@@ -1,0 +1,12 @@
+<nav><a href="index.html">&larr; Index</a></nav>
+<h1>Knowledge graph</h1>
+{% for node in nodes %}
+  <h2><a href="{{ node.slug }}.html">{{ node.title }}</a></h2>
+  <ul class="related">
+  {% for rel in node.related %}
+    <li><a href="{{ rel.slug }}.html">{{ rel.title }}</a> — {{ '%.3f'|format(rel.score) }}</li>
+  {% else %}
+    <li>(no related topics)</li>
+  {% endfor %}
+  </ul>
+{% endfor %}

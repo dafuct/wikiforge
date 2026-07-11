@@ -415,6 +415,26 @@ def context(home: str | None = HomeOption) -> None:
     typer.echo(asyncio.run(run_context(resolve_home(home))))
 
 
+@app.command()
+def export(
+    target: str = typer.Argument(..., help="obsidian | site | json."),
+    home: str | None = HomeOption,
+    out: str | None = typer.Option(
+        None, "--out", help="Output directory (default: <home>/export/<target>)."
+    ),
+) -> None:
+    """Export the wiki to an Obsidian vault, a static site, or a JSON dump."""
+    from wikiforge.services import run_export
+
+    out_path = Path(out) if out is not None else None
+    try:
+        written = asyncio.run(run_export(resolve_home(home), target, out_path))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Exported {target} to {written}")
+
+
 def main() -> None:
     """Console-script entry point."""
     app()
