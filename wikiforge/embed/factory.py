@@ -29,8 +29,11 @@ def build_embedding_provider(
 
     base: EmbeddingProvider
     if use_voyage:
+        api_key = env.get("VOYAGE_API_KEY")
+        if api_key is None:
+            raise ValueError("embedding provider 'voyage' requires VOYAGE_API_KEY to be set")
         base = VoyageEmbeddingProvider(
-            api_key=env["VOYAGE_API_KEY"],
+            api_key=api_key,
             model=config.embedding.voyage_model,
             dim=config.embedding.dim,
         )

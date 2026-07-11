@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import httpx
+import pytest
 import respx
 
 from wikiforge.config.settings import load_config, write_default_config
@@ -56,4 +57,29 @@ async def test_factory_falls_back_to_local_without_key(wiki_home: Path) -> None:
     await db.init_schema()
     provider = build_embedding_provider(cfg, Repository(db), env={})
     assert provider.provider_name == "local"
+    await db.close()
+
+
+async def test_voyage_does_not_retry_on_4xx() -> None:
+    import respx
+
+    with respx.mock:
+        route = respx.post(_VOYAGE).mock(return_value=httpx.Response(400, json={"error": "bad"}))
+        provider = VoyageEmbeddingProvider(api_key="k", model="voyage-3.5", dim=4)
+        with pytest.raises(httpx.HTTPStatusError):
+            await provider.embed(["x"])
+        assert route.call_count == 1  # no retries on a 4xx
+        await provider.aclose()
+
+
+async def test_factory_voyage_forced_without_key_raises(wiki_home: Path) -> None:
+    from wikiforge.config.settings import load_config, write_default_config
+
+    write_default_config(wiki_home, wiki_name="x")
+    cfg = load_config(wiki_home)
+    cfg.embedding.provider = "voyage"
+    db = await Database.open(wiki_home, dim=cfg.embedding.dim)
+    await db.init_schema()
+    with pytest.raises(ValueError, match="VOYAGE_API_KEY"):
+        build_embedding_provider(cfg, Repository(db), env={})
     await db.close()
