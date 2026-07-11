@@ -32,7 +32,8 @@ from wikiforge.models.domain import (
     ThesisVerdict,
     Topic,
 )
-from wikiforge.models.enums import OutputKind, QueryDepth
+from wikiforge.models.enums import ExportTarget, OutputKind, QueryDepth
+from wikiforge.output.exporter import Exporter
 from wikiforge.output.generator import OutputGenerator
 from wikiforge.query.service import QueryResult
 from wikiforge.search.index import index_owner
@@ -548,5 +549,21 @@ async def run_context(home: Path, *, limit: int = 20) -> str:
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:
         return await ActivityRecorder(Repository(db)).context_digest(limit)
+    finally:
+        await db.close()
+
+
+async def run_export(home: Path, target: str, out: Path | None) -> Path:
+    """Export the wiki to obsidian/site/json. Defaults ``out`` to ``home/export/<target>``.
+
+    Raises ``ValueError`` for an invalid target.
+    """
+    export_target = ExportTarget(target)  # raises ValueError on a bad target
+    destination = out if out is not None else home / "export" / target
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        exporter = Exporter(Repository(db), wiki_name=cfg.wiki_name)
+        return await exporter.export(export_target, destination)
     finally:
         await db.close()
