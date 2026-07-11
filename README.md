@@ -165,6 +165,27 @@ conflict_penalty_cap = 0.4
 
 ---
 
+## Choosing an LLM backend
+
+wikiforge can run its LLM calls two ways, selected in `config.toml`:
+
+    [llm]
+    backend = "api"          # or "subscription"
+
+- **`api`** (default) — the Anthropic developer API. Needs an API key / credit balance
+  from [console.anthropic.com](https://console.anthropic.com) (billed separately from a
+  Claude subscription). Efficient, with a hard structured-output guarantee and native web
+  search. Recommended for heavy research or when extraction robustness matters.
+- **`subscription`** — routes calls through the Claude Code CLI (`claude -p`), using your
+  Claude subscription (no API credits). Requires the `claude` binary installed and logged
+  in (`ant`/Claude Code). **Caveats:** every call loads the Claude Code harness
+  (~22K tokens of overhead), so a `wiki research` fan-out consumes subscription usage
+  limits quickly — best for light/occasional use. Structured extraction is
+  prompt-and-validate (slightly less robust than the API path), each call is slower, and
+  the cost shown by `wiki stats` is a notional API-equivalent estimate, not a real charge.
+
+---
+
 ## Keeping a wiki fresh
 
 Topics carry a volatility and a staleness window. `wiki refresh` lists lapsed topics; `--run` re-researches them. A daily cron entry:
