@@ -83,6 +83,8 @@ async def test_complete_parses_envelope_and_records_cost(wiki_home: Path) -> Non
         assert "sonnet" in argv  # "query" is a flagship task -> claude-sonnet-5 -> "sonnet"
         # cost row recorded under the claude-code provider
         assert await repo.cost_totals_by_model()  # non-empty
+        assert "WebSearch" not in argv  # no tools on a plain completion
+        assert "claude-sonnet-5" in await repo.cost_totals_by_model()  # recorded under the model
     finally:
         await db.close()
 
@@ -123,6 +125,20 @@ async def test_parse_retries_once_on_bad_json(wiki_home: Path) -> None:
         out = await provider.parse("normalize", "SYS", "USER", schema=_Finding)
         assert out.parsed.summary == "ok"
         assert len(runner.calls) == 2  # retried exactly once
+    finally:
+        await db.close()
+
+
+async def test_parse_retries_on_first_call_error(wiki_home: Path) -> None:
+    runner = _Recorder(
+        json.dumps({"is_error": True, "result": "transient"}),  # first call fails at runner level
+        _envelope('{"summary": "ok", "score": 2}'),  # retry succeeds
+    )
+    provider, _repo, db = await _provider(wiki_home, runner)
+    try:
+        out = await provider.parse("normalize", "SYS", "USER", schema=_Finding)
+        assert out.parsed.summary == "ok"
+        assert len(runner.calls) == 2  # first-attempt runner error was retried once
     finally:
         await db.close()
 
