@@ -39,6 +39,10 @@ async def refresh_topics(
     Always computes and returns :func:`stale_topics`. When ``run`` is set, each
     stale topic is re-researched via ``orchestrator.research`` (mode
     ``"standard"``) and then stamped with ``last_researched_at = now``.
+
+    If ``run`` is ``True`` and ``orchestrator.research(...)`` raises for a
+    topic, the loop stops immediately: remaining stale topics are neither
+    researched nor stamped, leaving a partial refresh.
     """
     stale = await stale_topics(repo, now=now)
     if run:
