@@ -9,11 +9,11 @@ from datetime import UTC, datetime
 
 from wikiforge.config.settings import Config
 from wikiforge.llm.provider import LLMProvider
-from wikiforge.models.domain import RawSource, ResearchFinding, ResearchSession
+from wikiforge.models.domain import RawSource, ResearchFinding, ResearchSession, ThesisVerdict
 from wikiforge.models.enums import SessionStatus, SourceType, Stance
-from wikiforge.models.schemas import ResearchFindingOut
+from wikiforge.models.schemas import ResearchFindingOut, ThesisVerdictOut
 from wikiforge.research.context import SESSION_CTX, AgentResult, SessionContext
-from wikiforge.research.personas import persona_system_prompt
+from wikiforge.research.personas import persona_system_prompt, thesis_system_prompt
 from wikiforge.storage.repository import Repository
 
 _WAVE_SIZE = 3
@@ -101,6 +101,97 @@ class ResearchOrchestrator:
             raise RuntimeError(f"research session {session_id} vanished after update")
         return result
 
+    async def evaluate_thesis(
+        self, *, claim: str, mode: str, budget_usd: float | None = None
+    ) -> ThesisVerdict:
+        """Fan out FOR/AGAINST agents, then synthesize a stored verdict with confidence."""
+        n = max(1, len(self._config.personas_for_mode(mode)) // 2)
+        session_id = await self._repo.create_research_session(
+            ResearchSession(
+                thesis_claim=claim, mode=mode, budget_usd=budget_usd, status=SessionStatus.RUNNING
+            )
+        )
+        ctx = SessionContext(session_id=session_id, topic=claim, trace_id=uuid.uuid4().hex)
+        token = SESSION_CTX.set(ctx)
+        try:
+            async with asyncio.TaskGroup() as tg:
+                tasks = []
+                for stance in ("for", "against"):
+                    for i in range(n):
+                        tasks.append(
+                            tg.create_task(self._run_stance_agent(session_id, claim, stance, i))
+                        )
+            _ = [t.result() for t in tasks]
+        finally:
+            SESSION_CTX.reset(token)
+
+        synth = await self._llm.parse(
+            "thesis",
+            "You are an impartial evaluator. Weigh the FOR and AGAINST evidence and reach a "
+            "verdict.",
+            f"<source_data>Claim: {claim}</source_data>",
+            tier="flagship",
+            schema=ThesisVerdictOut,
+            session_id=session_id,
+        )
+        out = synth.parsed
+        confidence = _thesis_confidence(out)
+        verdict = ThesisVerdict(
+            session_id=session_id,
+            claim=claim,
+            verdict=out.verdict,
+            confidence=confidence,
+            rationale=out.rationale,
+            citations=out.supporting_source_ids + out.refuting_source_ids,
+        )
+        verdict_id = await self._repo.add_thesis_verdict(verdict)
+        await self._repo.update_session(
+            session_id,
+            status=SessionStatus.DONE,
+            spend_usd=await self._repo.session_spend(session_id),
+            ended_at=datetime.now(UTC).isoformat(),
+        )
+        return verdict.model_copy(update={"id": verdict_id})
+
+    async def _run_stance_agent(
+        self, session_id: int, claim: str, stance: str, idx: int
+    ) -> AgentResult:
+        """One FOR/AGAINST agent — never raises."""
+        persona = f"{stance}-{idx}"
+        try:
+            system = thesis_system_prompt(stance, claim)
+            completion = await self._llm.complete(
+                "research",
+                system,
+                f"Evaluate: {claim}",
+                tier="flagship",
+                use_web_search=True,
+                session_id=session_id,
+            )
+            source = RawSource(
+                content_hash=_finding_hash(session_id, persona, completion.text),
+                source_type=SourceType.FINDING,
+                title=f"{persona} on {claim}",
+                text=completion.text,
+                fetched_at=datetime.now(UTC),
+                first_seen_session_id=session_id,
+                persona=persona,
+                provenance={"session_id": str(session_id), "stance": stance},
+            )
+            source_id, _ = await self._repo.ingest_raw_source(source)
+            await self._repo.add_finding(
+                ResearchFinding(
+                    session_id=session_id,
+                    persona=persona,
+                    raw_source_id=source_id,
+                    summary=completion.text[:400],
+                    stance=Stance.FOR if stance == "for" else Stance.AGAINST,
+                )
+            )
+            return AgentResult(persona=persona, ok=True)
+        except Exception as exc:  # noqa: BLE001 — agents must never abort the round
+            return AgentResult(persona=persona, ok=False, error=repr(exc))
+
     async def _run_agent(self, session_id: int, topic_title: str, persona: str) -> AgentResult:
         """Run one persona agent (search -> persist evidence -> normalize -> record finding).
 
@@ -160,3 +251,13 @@ def _stance_of(value: str) -> Stance:
         return Stance(value.lower())
     except ValueError:
         return Stance.NEUTRAL
+
+
+def _thesis_confidence(out: ThesisVerdictOut) -> float:
+    """Confidence from evidence strength, damped when for/against evidence is balanced."""
+    n_for, n_against = len(out.supporting_source_ids), len(out.refuting_source_ids)
+    total = n_for + n_against
+    if total == 0:
+        return 0.0
+    decisiveness = abs(n_for - n_against) / total
+    return round(min(1.0, 0.5 * out.evidence_strength + 0.5 * decisiveness), 4)

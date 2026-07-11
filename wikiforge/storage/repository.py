@@ -19,9 +19,10 @@ from wikiforge.models.domain import (
     RawSource,
     ResearchFinding,
     ResearchSession,
+    ThesisVerdict,
     Topic,
 )
-from wikiforge.models.enums import SessionStatus, SourceType, TopicStatus, Volatility
+from wikiforge.models.enums import SessionStatus, SourceType, TopicStatus, Verdict, Volatility
 from wikiforge.storage.db import Database
 
 # ``mandatory_parameters=False``: the installed aiosql (15.x) otherwise requires
@@ -343,3 +344,33 @@ class Repository:
         """Return the accumulated LLM spend for a session (USD)."""
         row = await self._q.session_spend(self._db.conn, session_id=session_id)
         return float(row["spend"])
+
+    async def add_thesis_verdict(self, verdict: ThesisVerdict) -> int:
+        """Persist a thesis verdict and return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_thesis_verdict(
+                self._db.conn,
+                session_id=verdict.session_id,
+                claim=verdict.claim,
+                verdict=str(verdict.verdict),
+                confidence=verdict.confidence,
+                rationale=verdict.rationale,
+                citations=json.dumps(verdict.citations),
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def get_thesis_verdict(self, session_id: int) -> ThesisVerdict | None:
+        """Fetch the thesis verdict for a session."""
+        row = await self._q.get_thesis_verdict(self._db.conn, session_id=session_id)
+        if row is None:
+            return None
+        return ThesisVerdict(
+            id=row["id"],
+            session_id=row["session_id"],
+            claim=row["claim"],
+            verdict=Verdict(row["verdict"]),
+            confidence=row["confidence"],
+            rationale=row["rationale"],
+            citations=json.loads(row["citations"]),
+        )
