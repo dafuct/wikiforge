@@ -14,7 +14,9 @@ import aiosql
 
 from wikiforge.models.domain import (
     ActivityEntry,
+    Article,
     EmbeddingCacheEntry,
+    Feedback,
     LlmCall,
     RawSource,
     ResearchFinding,
@@ -22,7 +24,15 @@ from wikiforge.models.domain import (
     ThesisVerdict,
     Topic,
 )
-from wikiforge.models.enums import SessionStatus, SourceType, TopicStatus, Verdict, Volatility
+from wikiforge.models.enums import (
+    FeedbackVerdict,
+    SessionStatus,
+    SourceType,
+    Stance,
+    TopicStatus,
+    Verdict,
+    Volatility,
+)
 from wikiforge.research.context import SessionEvidence
 from wikiforge.storage.db import Database
 
@@ -389,3 +399,136 @@ class Repository:
             rationale=row["rationale"],
             citations=json.loads(row["citations"]),
         )
+
+    async def raw_sources_for_topic(self, topic_id: int) -> list[RawSource]:
+        """Return the raw sources contributing to a topic (via its research sessions)."""
+        return [
+            RawSource(
+                id=r["id"],
+                content_hash=r["content_hash"],
+                canonical_url=r["canonical_url"],
+                source_type=SourceType(r["source_type"]),
+                title=r["title"],
+                text=r["text"],
+                fetched_at=r["fetched_at"],
+                first_seen_session_id=r["first_seen_session_id"],
+                persona=r["persona"],
+                provenance=json.loads(r["provenance"]),
+            )
+            async for r in self._q.raw_sources_for_topic(self._db.conn, topic_id=topic_id)
+        ]
+
+    async def findings_for_topic(self, topic_id: int) -> list[ResearchFinding]:
+        """Return the research findings contributing to a topic."""
+        return [
+            ResearchFinding(
+                id=r["id"],
+                session_id=r["session_id"],
+                persona=r["persona"],
+                raw_source_id=r["raw_source_id"],
+                summary=r["summary"],
+                stance=Stance(r["stance"]),
+            )
+            async for r in self._q.findings_for_topic(self._db.conn, topic_id=topic_id)
+        ]
+
+    async def feedback_for_topic(self, topic_id: int) -> list[Feedback]:
+        """Return user feedback recorded against a topic's articles."""
+        return [
+            Feedback(
+                id=r["id"],
+                target_type=r["target_type"],
+                target_id=r["target_id"],
+                verdict=FeedbackVerdict(r["verdict"]),
+                note=r["note"],
+                created_at=r["created_at"],
+            )
+            async for r in self._q.feedback_for_topic(self._db.conn, topic_id=topic_id)
+        ]
+
+    async def latest_article_for_topic(self, topic_id: int) -> Article | None:
+        """Return the highest-versioned article for a topic, or ``None`` if uncompiled."""
+        row = await self._q.latest_article_for_topic(self._db.conn, topic_id=topic_id)
+        if row is None:
+            return None
+        return Article(
+            id=row["id"],
+            topic_id=row["topic_id"],
+            slug=row["slug"],
+            title=row["title"],
+            body_md=row["body_md"],
+            path=row["path"],
+            confidence=row["confidence"],
+            compile_digest=row["compile_digest"],
+            version=row["version"],
+            created_at=row["created_at"],
+        )
+
+    async def insert_article(self, article: Article) -> int:
+        """Insert a new (versioned) compiled article and return its id."""
+        async with self._db.lock:
+            row = await self._q.insert_article(
+                self._db.conn,
+                topic_id=article.topic_id,
+                slug=article.slug,
+                title=article.title,
+                body_md=article.body_md,
+                path=article.path,
+                confidence=article.confidence,
+                compile_digest=article.compile_digest,
+                version=article.version,
+            )
+            await self._db.conn.commit()
+        return int(row["id"])
+
+    async def insert_citation(
+        self, article_id: int, claim_text: str, raw_source_id: int, quote: str | None
+    ) -> None:
+        """Record a claim-level citation from an article to a supporting source."""
+        async with self._db.lock:
+            await self._q.insert_citation(
+                self._db.conn,
+                article_id=article_id,
+                claim_text=claim_text,
+                raw_source_id=raw_source_id,
+                quote=quote,
+            )
+            await self._db.conn.commit()
+
+    async def insert_conflict(
+        self, topic_id: int, article_id: int, claim: str, nature: str, source_ids: list[str]
+    ) -> None:
+        """Record a detected disagreement between sources for a topic/article."""
+        async with self._db.lock:
+            await self._q.insert_conflict(
+                self._db.conn,
+                topic_id=topic_id,
+                article_id=article_id,
+                claim=claim,
+                nature=nature,
+                source_ids=json.dumps(source_ids),
+            )
+            await self._db.conn.commit()
+
+    async def list_topics(self, status: TopicStatus = TopicStatus.ACTIVE) -> list[Topic]:
+        """Return topics with the given lifecycle status, ordered by id."""
+        return [
+            Topic(
+                id=r["id"],
+                slug=r["slug"],
+                title=r["title"],
+                status=TopicStatus(r["status"]),
+                volatility=Volatility(r["volatility"]),
+                stale_after_days=r["stale_after_days"],
+                last_researched_at=r["last_researched_at"],
+                last_compiled_at=r["last_compiled_at"],
+                created_at=r["created_at"],
+            )
+            async for r in self._q.list_topics_by_status(self._db.conn, status=str(status))
+        ]
+
+    async def set_topic_compiled(self, topic_id: int, at: str) -> None:
+        """Stamp a topic's ``last_compiled_at`` timestamp."""
+        async with self._db.lock:
+            await self._q.set_topic_compiled(self._db.conn, id=topic_id, at=at)
+            await self._db.conn.commit()
