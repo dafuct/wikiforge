@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 _ENDPOINT = "https://api.voyageai.com/v1/embeddings"
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Retry transient failures only: 5xx responses and transport/timeout errors."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return isinstance(exc, httpx.TransportError)
 
 
 class VoyageEmbeddingProvider:
@@ -47,7 +54,12 @@ class VoyageEmbeddingProvider:
             self._client = httpx.AsyncClient(timeout=30.0)
         return self._client
 
-    @retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=1, max=20), reraise=True)
+    @retry(
+        retry=retry_if_exception(_is_retryable),
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=1, max=20),
+        reraise=True,
+    )
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Return one embedding per input text via the Voyage API (retried on failure)."""
         response = await self._http().post(

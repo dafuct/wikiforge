@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
 
@@ -54,4 +55,5 @@ class LocalEmbeddingProvider:
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Return one embedding per input text using the local model."""
-        return self._ensure_encoder()(texts)
+        encoder = self._ensure_encoder()
+        return await asyncio.to_thread(encoder, texts)
