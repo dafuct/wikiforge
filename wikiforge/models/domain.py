@@ -204,3 +204,13 @@ class LlmCall(BaseModel):
     output_tokens: int = 0
     cost_usd: float = 0.0
     session_id: int | None = None
+
+
+class EmbeddingCacheEntry(BaseModel):
+    """A cached embedding vector keyed by content hash + provider + model."""
+
+    content_hash: str
+    provider: str
+    model: str
+    dim: int
+    vector: list[float]
