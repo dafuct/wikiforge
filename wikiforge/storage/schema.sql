@@ -156,6 +156,11 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     session_id INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS wiki_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS embedding_cache (
     content_hash TEXT NOT NULL,
     provider TEXT NOT NULL,
