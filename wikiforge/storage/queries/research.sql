@@ -23,3 +23,11 @@ SELECT DISTINCT persona FROM research_findings WHERE session_id = :session_id;
 
 -- name: session_spend^
 SELECT COALESCE(SUM(cost_usd), 0.0) AS spend FROM llm_calls WHERE session_id = :session_id;
+
+-- name: insert_thesis_verdict^
+INSERT INTO thesis_verdicts (session_id, claim, verdict, confidence, rationale, citations)
+VALUES (:session_id, :claim, :verdict, :confidence, :rationale, :citations)
+RETURNING id;
+
+-- name: get_thesis_verdict^
+SELECT * FROM thesis_verdicts WHERE session_id = :session_id;
