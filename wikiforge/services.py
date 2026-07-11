@@ -16,6 +16,7 @@ from wikiforge.config.settings import (
     load_config,
     write_default_config,
 )
+from wikiforge.embed.factory import effective_embedding_dim
 from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.ingest import sources as ingest_sources
 from wikiforge.models.domain import RawSource
@@ -36,7 +37,7 @@ async def init_wiki(name: str, home: Path) -> Path:
         write_default_config(home, wiki_name=name)
     cfg = load_config(home)
 
-    db = await Database.open(home, dim=cfg.embedding.dim)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:
         await db.init_schema()
         recorder = ActivityRecorder(Repository(db))
@@ -69,10 +70,10 @@ async def ingest_source(
     refreshed on re-ingest), indexes it into chunks/FTS/vector, and records an
     ``ingest`` activity row. Returns ``(stored_source, created)``.
 
-    ``_db`` is a test-only seam: production callers always open their own
-    ``Database`` from ``home`` (and this function closes it before returning).
-    Tests pass an already-open database so they can assert on it afterward; in
-    that case this function neither opens nor closes it.
+    ``_db`` lets a caller pass an already-open ``Database``: the CLI does this
+    to share one connection/lock with a caller-built ``Repository``, and tests
+    do it so they can assert on the DB afterward. When omitted, one is opened
+    from ``home`` and closed on exit.
     """
     kind = detect_target_kind(target)
     if kind == "url":
@@ -87,7 +88,8 @@ async def ingest_source(
         repo = Repository(db)
         source_id, created = await repo.ingest_raw_source(source)
         stored = await repo.get_raw_source_by_hash(source.content_hash)
-        assert stored is not None
+        if stored is None:
+            raise RuntimeError("stored raw source missing after ingest")
         await index_owner(
             repo, embedder, owner_type="raw_source", owner_id=source_id, text=stored.text
         )

@@ -53,7 +53,7 @@ def ingest(
     import httpx
 
     from wikiforge.config.settings import load_config
-    from wikiforge.embed.factory import build_embedding_provider
+    from wikiforge.embed.factory import build_embedding_provider, effective_embedding_dim
     from wikiforge.services import ingest_source
     from wikiforge.storage.db import Database
     from wikiforge.storage.repository import Repository
@@ -62,7 +62,7 @@ def ingest(
 
     async def _run() -> tuple[str, bool]:
         cfg = load_config(target_home)
-        db = await Database.open(target_home, dim=cfg.embedding.dim)
+        db = await Database.open(target_home, dim=effective_embedding_dim(cfg))
         try:
             embedder = build_embedding_provider(cfg, Repository(db))
             async with httpx.AsyncClient() as client:

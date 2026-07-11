@@ -12,31 +12,38 @@ from wikiforge.embed.voyage import VoyageEmbeddingProvider
 from wikiforge.storage.repository import Repository
 
 
+def _use_voyage(config: Config, env: Mapping[str, str]) -> bool:
+    setting = config.embedding.provider
+    return setting == "voyage" or (setting == "auto" and "VOYAGE_API_KEY" in env)
+
+
+def effective_embedding_dim(config: Config, *, env: Mapping[str, str] = os.environ) -> int:
+    """Return the vector dimension the active provider will produce.
+
+    Voyage uses the configurable ``dim``; the local model outputs a fixed
+    ``local_dim``. Use this to size the ``vec0`` table at init so it matches the
+    provider ingestion will actually use.
+    """
+    return config.embedding.dim if _use_voyage(config, env) else config.embedding.local_dim
+
+
 def build_embedding_provider(
     config: Config,
     repo: Repository,
     *,
     env: Mapping[str, str] = os.environ,
 ) -> EmbeddingProvider:
-    """Return a cache-wrapped embedding provider.
-
-    Uses Voyage when ``VOYAGE_API_KEY`` is set (or the config forces ``voyage``),
-    otherwise the local sentence-transformers provider. The result is always
-    wrapped in a ``CachedEmbeddingProvider``.
-    """
-    setting = config.embedding.provider
-    use_voyage = setting == "voyage" or (setting == "auto" and "VOYAGE_API_KEY" in env)
-
+    """Return a cache-wrapped embedding provider (Voyage if keyed, else Local)."""
     base: EmbeddingProvider
-    if use_voyage:
+    if _use_voyage(config, env):
         api_key = env.get("VOYAGE_API_KEY")
         if api_key is None:
             raise ValueError("embedding provider 'voyage' requires VOYAGE_API_KEY to be set")
         base = VoyageEmbeddingProvider(
-            api_key=api_key,
-            model=config.embedding.voyage_model,
-            dim=config.embedding.dim,
+            api_key=api_key, model=config.embedding.voyage_model, dim=config.embedding.dim
         )
     else:
-        base = LocalEmbeddingProvider(model=config.embedding.local_model, dim=config.embedding.dim)
+        base = LocalEmbeddingProvider(
+            model=config.embedding.local_model, dim=config.embedding.local_dim
+        )
     return CachedEmbeddingProvider(base, repo)
