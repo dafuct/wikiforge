@@ -198,10 +198,8 @@ async def run_research(
     :class:`~wikiforge.research.orchestrator.ResearchOrchestrator`. ``reporter``
     is forwarded to the orchestrator for live progress (default: no-op).
     """
-    from anthropic import AsyncAnthropic
-
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.llm.anthropic_provider import AnthropicProvider
+    from wikiforge.llm.factory import build_llm_provider
     from wikiforge.research.orchestrator import ResearchOrchestrator
     from wikiforge.research.volatility import infer_volatility
 
@@ -209,7 +207,7 @@ async def run_research(
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:
         repo = Repository(db)
-        llm = AnthropicProvider(AsyncAnthropic(), CostTracker(repo, cfg), cfg)
+        llm = build_llm_provider(cfg, CostTracker(repo, cfg))
         slug = slugify(topic_text)
         topic = await repo.get_topic(slug)
         if topic is None:
@@ -248,17 +246,15 @@ async def run_thesis(
     Delegates fan-out and verdict synthesis to
     :meth:`~wikiforge.research.orchestrator.ResearchOrchestrator.evaluate_thesis`.
     """
-    from anthropic import AsyncAnthropic
-
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.llm.anthropic_provider import AnthropicProvider
+    from wikiforge.llm.factory import build_llm_provider
     from wikiforge.research.orchestrator import ResearchOrchestrator
 
     cfg = load_config(home)
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:
         repo = Repository(db)
-        llm = AnthropicProvider(AsyncAnthropic(), CostTracker(repo, cfg), cfg)
+        llm = build_llm_provider(cfg, CostTracker(repo, cfg))
         orch = ResearchOrchestrator(llm, repo, cfg)
         return await orch.evaluate_thesis(claim=claim, mode=mode, budget_usd=budget_usd)
     finally:
@@ -274,19 +270,17 @@ async def run_compile(home: Path, *, full: bool) -> list[Article]:
     list when there is nothing to compile (no topics, or every topic's digest
     is already up to date and ``full`` is not set).
     """
-    from anthropic import AsyncAnthropic
-
     from wikiforge.activity.cost import CostTracker
     from wikiforge.compile.compiler import Compiler
     from wikiforge.embed.factory import build_embedding_provider
-    from wikiforge.llm.anthropic_provider import AnthropicProvider
+    from wikiforge.llm.factory import build_llm_provider
 
     cfg = load_config(home)
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:
         repo = Repository(db)
         tracker = CostTracker(repo, cfg)
-        llm = AnthropicProvider(AsyncAnthropic(), tracker, cfg)
+        llm = build_llm_provider(cfg, tracker)
         embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
         compiler = Compiler(llm, embedder, repo, cfg, home)
         return await compiler.compile_all(force=full)
@@ -322,17 +316,15 @@ async def run_related(home: Path, topic_text: str) -> list[tuple[Topic, float]]:
 async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
     """Answer a question against the wiki, citing the retrieved chunks it relied on.
 
-    Assembles the real ``AnthropicProvider``, the factory-selected embedding provider,
+    Assembles the factory-selected LLM provider, the factory-selected embedding provider,
     and a ``HybridRetriever``, then delegates to
     :func:`~wikiforge.query.service.answer_query`. For ``depth="deep"`` a real
     sentence-transformers ``CrossEncoder`` (``retrieval.rerank_model``) is lazily built
     and wired in as the reranker; ``quick``/``standard`` queries never load it.
     """
-    from anthropic import AsyncAnthropic
-
     from wikiforge.activity.cost import CostTracker
     from wikiforge.embed.factory import build_embedding_provider
-    from wikiforge.llm.anthropic_provider import AnthropicProvider
+    from wikiforge.llm.factory import build_llm_provider
     from wikiforge.query.service import answer_query
     from wikiforge.search.retriever import HybridRetriever, Reranker
 
@@ -341,7 +333,7 @@ async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
     try:
         repo = Repository(db)
         tracker = CostTracker(repo, cfg)
-        llm = AnthropicProvider(AsyncAnthropic(), tracker, cfg)
+        llm = build_llm_provider(cfg, tracker)
         embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
 
         reranker: Reranker | None = None
@@ -371,10 +363,8 @@ async def run_generate(home: Path, kind: str, topic: str, *, out: Path | None) -
     ``out`` when given; always returns it. Raises ``ValueError`` for an unknown
     topic, an invalid kind, or a topic with no compiled article.
     """
-    from anthropic import AsyncAnthropic
-
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.llm.anthropic_provider import AnthropicProvider
+    from wikiforge.llm.factory import build_llm_provider
 
     output_kind = OutputKind(kind)  # raises ValueError on a bad kind
     cfg = load_config(home)
@@ -386,7 +376,7 @@ async def run_generate(home: Path, kind: str, topic: str, *, out: Path | None) -
         article = await repo.latest_article_for_topic(resolved.id)
         if article is None:
             raise ValueError(f"topic {resolved.slug!r} has no compiled article; run `wiki compile`")
-        llm = AnthropicProvider(AsyncAnthropic(), CostTracker(repo, cfg), cfg)
+        llm = build_llm_provider(cfg, CostTracker(repo, cfg))
         text = await OutputGenerator(llm).generate(
             output_kind, topic_title=resolved.title, article_body=article.body_md
         )
@@ -456,7 +446,7 @@ async def run_feedback(home: Path, target: str, action: str, note: str) -> int:
 async def run_refresh(home: Path, *, run: bool) -> list[Topic]:
     """List (or, when ``run``, re-research) topics whose freshness window has lapsed.
 
-    Builds the real ``AnthropicProvider``/``ResearchOrchestrator`` only when
+    Builds the factory-selected LLM provider and ``ResearchOrchestrator`` only when
     ``run`` is set — a plain listing needs no network access, so ``--run``-less
     calls never construct one.
     """
@@ -472,13 +462,11 @@ async def run_refresh(home: Path, *, run: bool) -> list[Topic]:
         if not run:
             return await stale_topics(repo, now=now)
 
-        from anthropic import AsyncAnthropic
-
         from wikiforge.activity.cost import CostTracker
-        from wikiforge.llm.anthropic_provider import AnthropicProvider
+        from wikiforge.llm.factory import build_llm_provider
         from wikiforge.research.orchestrator import ResearchOrchestrator
 
-        llm = AnthropicProvider(AsyncAnthropic(), CostTracker(repo, cfg), cfg)
+        llm = build_llm_provider(cfg, CostTracker(repo, cfg))
         orch = ResearchOrchestrator(llm, repo, cfg)
         return await refresh_topics(orch, repo, now=now, run=True)
     finally:

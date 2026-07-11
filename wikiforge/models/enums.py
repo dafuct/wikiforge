@@ -98,3 +98,10 @@ class ExportTarget(StrEnum):
     OBSIDIAN = "obsidian"
     SITE = "site"
     JSON = "json"
+
+
+class LlmBackend(StrEnum):
+    """Which backend serves the wiki's LLM calls."""
+
+    API = "api"
+    SUBSCRIPTION = "subscription"

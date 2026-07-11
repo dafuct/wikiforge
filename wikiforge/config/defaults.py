@@ -74,4 +74,9 @@ w_recency = 0.25
 w_evidence = 0.15
 conflict_penalty_per = 0.1
 conflict_penalty_cap = 0.4
+
+[llm]
+# "api" = Anthropic developer API (needs an API key / credits from console.anthropic.com).
+# "subscription" = Claude Code CLI (`claude -p`), uses your Claude subscription (no API credits).
+backend = "api"
 """
