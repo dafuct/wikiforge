@@ -12,6 +12,7 @@ from pathlib import Path
 import httpx
 
 from wikiforge.activity.recorder import ActivityRecorder
+from wikiforge.activity.stats import StatsService, WikiStats
 from wikiforge.config.settings import (
     CONFIG_FILENAME,
     load_config,
@@ -31,8 +32,11 @@ from wikiforge.models.domain import (
     ThesisVerdict,
     Topic,
 )
-from wikiforge.models.enums import QueryDepth
+from wikiforge.models.enums import ExportTarget, OutputKind, QueryDepth
+from wikiforge.output.exporter import Exporter
+from wikiforge.output.generator import OutputGenerator
 from wikiforge.query.service import QueryResult
+from wikiforge.research.progress import ResearchReporter
 from wikiforge.search.index import index_owner
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
@@ -136,9 +140,43 @@ async def ingest_source(
             await db.close()
 
 
+async def run_ingest(home: Path, target: str) -> tuple[RawSource, bool]:
+    """Ingest a URL/PDF/file target into the wiki, returning (source, created).
+
+    Builds the real embedder + HTTP client and delegates to :func:`ingest_source`.
+    """
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.embed.factory import build_embedding_provider
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        embedder = build_embedding_provider(cfg, repo, cost_tracker=CostTracker(repo, cfg))
+        async with httpx.AsyncClient() as client:
+            return await ingest_source(home, target, http_client=client, embedder=embedder, _db=db)
+    finally:
+        await db.close()
+
+
 def slugify(text: str) -> str:
     """Return a URL/filesystem-safe slug: lowercase, non-alphanumerics collapsed to hyphens."""
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+async def _resolve_topic(repo: Repository, ref: str) -> Topic:
+    """Resolve a topic by slug, falling back to a case-insensitive title match.
+
+    Raises ``ValueError`` when no topic matches ``ref``.
+    """
+    topic = await repo.get_topic(ref)
+    if topic is not None:
+        return topic
+    wanted = ref.strip().lower()
+    for candidate in await repo.list_topics():
+        if candidate.title.strip().lower() == wanted:
+            return candidate
+    raise ValueError(f"unknown topic {ref!r}")
 
 
 async def run_research(
@@ -149,6 +187,7 @@ async def run_research(
     new_topic: bool,
     budget_usd: float | None,
     resume_session_id: int | None,
+    reporter: ResearchReporter | None = None,
 ) -> ResearchSession:
     """Run (or resume) a research session for a topic.
 
@@ -156,7 +195,8 @@ async def run_research(
     when ``new_topic`` is set (with volatility inferred via
     :func:`~wikiforge.research.volatility.infer_volatility`); otherwise a
     ``ValueError`` is raised. Delegates the actual persona fan-out to
-    :class:`~wikiforge.research.orchestrator.ResearchOrchestrator`.
+    :class:`~wikiforge.research.orchestrator.ResearchOrchestrator`. ``reporter``
+    is forwarded to the orchestrator for live progress (default: no-op).
     """
     from anthropic import AsyncAnthropic
 
@@ -190,6 +230,7 @@ async def run_research(
             mode=mode,
             budget_usd=budget_usd,
             resume_session_id=resume_session_id,
+            reporter=reporter,
         )
     finally:
         await db.close()
@@ -319,6 +360,41 @@ async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
         return await answer_query(llm, retriever, query, depth=depth)
     finally:
         await db.close()
+
+
+async def run_generate(home: Path, kind: str, topic: str, *, out: Path | None) -> str:
+    """Generate a derived document (report/summary/...) for a topic's latest article.
+
+    ``kind`` must be an :class:`~wikiforge.models.enums.OutputKind` value. Resolves
+    the topic (slug or title), loads its latest compiled article, and runs the
+    flagship :class:`~wikiforge.output.generator.OutputGenerator`. Writes the text to
+    ``out`` when given; always returns it. Raises ``ValueError`` for an unknown
+    topic, an invalid kind, or a topic with no compiled article.
+    """
+    from anthropic import AsyncAnthropic
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.llm.anthropic_provider import AnthropicProvider
+
+    output_kind = OutputKind(kind)  # raises ValueError on a bad kind
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        resolved = await _resolve_topic(repo, topic)
+        assert resolved.id is not None
+        article = await repo.latest_article_for_topic(resolved.id)
+        if article is None:
+            raise ValueError(f"topic {resolved.slug!r} has no compiled article; run `wiki compile`")
+        llm = AnthropicProvider(AsyncAnthropic(), CostTracker(repo, cfg), cfg)
+        text = await OutputGenerator(llm).generate(
+            output_kind, topic_title=resolved.title, article_body=article.body_md
+        )
+    finally:
+        await db.close()
+    if out is not None:
+        out.write_text(text, encoding="utf-8")
+    return text
 
 
 async def run_lint(home: Path, *, fix: bool) -> tuple[list[LintFinding], int]:
@@ -476,5 +552,41 @@ async def run_archive(home: Path, slug: str) -> Topic:
     try:
         repo = Repository(db)
         return await archive_topic(repo, slug)
+    finally:
+        await db.close()
+
+
+async def run_stats(home: Path, *, since: str | None) -> WikiStats:
+    """Compute a wiki-wide stats snapshot (counts + cost totals, optional since window)."""
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        return await StatsService(Repository(db)).compute(since=since)
+    finally:
+        await db.close()
+
+
+async def run_context(home: Path, *, limit: int = 20) -> str:
+    """Render the recent-activity digest (the `wiki context` CLAUDE.md-style summary)."""
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        return await ActivityRecorder(Repository(db)).context_digest(limit)
+    finally:
+        await db.close()
+
+
+async def run_export(home: Path, target: str, out: Path | None) -> Path:
+    """Export the wiki to obsidian/site/json. Defaults ``out`` to ``home/export/<target>``.
+
+    Raises ``ValueError`` for an invalid target.
+    """
+    export_target = ExportTarget(target)  # raises ValueError on a bad target
+    destination = out if out is not None else home / "export" / target
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        exporter = Exporter(Repository(db), wiki_name=cfg.wiki_name)
+        return await exporter.export(export_target, destination)
     finally:
         await db.close()

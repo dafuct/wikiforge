@@ -54,34 +54,12 @@ def ingest(
     home: str | None = HomeOption,
 ) -> None:
     """Ingest a source (URL, PDF, or file) into the wiki."""
-    import httpx
-
-    from wikiforge.activity.cost import CostTracker
-    from wikiforge.config.settings import load_config
-    from wikiforge.embed.factory import build_embedding_provider, effective_embedding_dim
-    from wikiforge.services import ingest_source
-    from wikiforge.storage.db import Database
-    from wikiforge.storage.repository import Repository
+    from wikiforge.services import run_ingest
 
     target_home = resolve_home(home)
-
-    async def _run() -> tuple[str, bool]:
-        cfg = load_config(target_home)
-        db = await Database.open(target_home, dim=effective_embedding_dim(cfg))
-        try:
-            repo = Repository(db)
-            embedder = build_embedding_provider(cfg, repo, cost_tracker=CostTracker(repo, cfg))
-            async with httpx.AsyncClient() as client:
-                src, created = await ingest_source(
-                    target_home, target, http_client=client, embedder=embedder, _db=db
-                )
-            return src.title, created
-        finally:
-            await db.close()
-
-    title, created = asyncio.run(_run())
+    source, created = asyncio.run(run_ingest(target_home, target))
     verb = "Ingested" if created else "Re-ingested (dedup)"
-    typer.echo(f"{verb}: {title}")
+    typer.echo(f"{verb}: {source.title}")
 
 
 @app.command()
@@ -122,20 +100,24 @@ def research(
     ),
 ) -> None:
     """Research a topic across persona agents, gathering and normalizing findings."""
+    from wikiforge.cli.live import LiveResearchTable
     from wikiforge.services import run_research
 
     target_home = resolve_home(home)
+    reporter = LiveResearchTable()
     try:
-        session = asyncio.run(
-            run_research(
-                target_home,
-                topic,
-                mode=mode,
-                new_topic=new_topic,
-                budget_usd=budget,
-                resume_session_id=resume,
+        with reporter:
+            session = asyncio.run(
+                run_research(
+                    target_home,
+                    topic,
+                    mode=mode,
+                    new_topic=new_topic,
+                    budget_usd=budget,
+                    resume_session_id=resume,
+                    reporter=reporter,
+                )
             )
-        )
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from None
@@ -226,6 +208,31 @@ def query(
         typer.echo("\nSources:")
         for source in result.sources:
             typer.echo(f"  {source.owner_type}:{source.owner_id}#{source.seq}")
+
+
+@app.command()
+def generate(
+    kind: str = typer.Argument(
+        ...,
+        help="report | slides-outline | summary | study-guide | timeline | glossary | comparison.",
+    ),
+    topic: str = typer.Argument(..., help="Topic slug or title to generate from."),
+    home: str | None = HomeOption,
+    out: str | None = typer.Option(None, "--out", help="Write the output to this file path."),
+) -> None:
+    """Generate a derived document from a topic's compiled article."""
+    from wikiforge.services import run_generate
+
+    out_path = Path(out) if out is not None else None
+    try:
+        text = asyncio.run(run_generate(resolve_home(home), kind, topic, out=out_path))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    if out_path is not None:
+        typer.echo(f"Wrote {kind} for {topic!r} to {out_path}")
+    else:
+        typer.echo(text)
 
 
 @app.command()
@@ -360,6 +367,62 @@ def refresh(
         typer.echo(f"{len(topics)} stale topic(s):")
         for topic in topics:
             typer.echo(f"  {topic.slug} — {_overdue_text(topic)}")
+
+
+@app.command()
+def stats(
+    home: str | None = HomeOption,
+    since: str | None = typer.Option(
+        None, "--since", help="Only count LLM calls/cost at or after this date (YYYY-MM-DD)."
+    ),
+) -> None:
+    """Show wiki size (topics/articles/sources/sessions) and LLM spend."""
+    from wikiforge.services import run_stats
+
+    s = asyncio.run(run_stats(resolve_home(home), since=since))
+    typer.echo(f"Topics: {s.topics}   Articles: {s.articles}")
+    typer.echo(f"Raw sources: {s.raw_sources}   Research sessions: {s.sessions}")
+    typer.echo(f"Total LLM spend: ${s.total_cost_usd:.4f}")
+    for model, cost in sorted(s.cost_by_model.items()):
+        typer.echo(f"  {model}: ${cost:.4f}")
+    if s.since is not None:
+        typer.echo(f"Since {s.since}: {s.calls_since} call(s), ${s.cost_since_usd:.4f}")
+
+
+@app.command()
+def context(home: str | None = HomeOption) -> None:
+    """Print a recent-activity digest suitable for pasting into an agent's context."""
+    from wikiforge.services import run_context
+
+    typer.echo(asyncio.run(run_context(resolve_home(home))))
+
+
+@app.command()
+def export(
+    target: str = typer.Argument(..., help="obsidian | site | json."),
+    home: str | None = HomeOption,
+    out: str | None = typer.Option(
+        None, "--out", help="Output directory (default: <home>/export/<target>)."
+    ),
+) -> None:
+    """Export the wiki to an Obsidian vault, a static site, or a JSON dump."""
+    from wikiforge.services import run_export
+
+    out_path = Path(out) if out is not None else None
+    try:
+        written = asyncio.run(run_export(resolve_home(home), target, out_path))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Exported {target} to {written}")
+
+
+@app.command(name="serve-mcp")
+def serve_mcp(home: str | None = HomeOption) -> None:
+    """Serve the wiki over the Model Context Protocol (stdio transport)."""
+    from wikiforge.mcp.server import build_server
+
+    build_server(resolve_home(home)).run(transport="stdio")
 
 
 def main() -> None:

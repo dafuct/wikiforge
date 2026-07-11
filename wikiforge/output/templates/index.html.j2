@@ -1,0 +1,12 @@
+{% extends "_base.html.j2" %}
+{% block title %}{{ wiki_name }}{% endblock %}
+{% block content %}
+<nav><a href="graph.html">Knowledge graph</a></nav>
+<h1>{{ wiki_name }}</h1>
+<ul>
+{% for t in topics %}
+  <li><a href="{{ t.slug }}.html">{{ t.title }}</a>
+    <span class="confidence">({{ '%.2f'|format(t.confidence) }})</span></li>
+{% endfor %}
+</ul>
+{% endblock %}
