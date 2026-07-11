@@ -20,6 +20,7 @@ from wikiforge.config.settings import (
 from wikiforge.embed.factory import effective_embedding_dim
 from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.ingest import sources as ingest_sources
+from wikiforge.lint.linter import LintFinding, WikiLinter
 from wikiforge.models.domain import Article, RawSource, ResearchSession, ThesisVerdict, Topic
 from wikiforge.models.enums import QueryDepth
 from wikiforge.query.service import QueryResult
@@ -298,5 +299,28 @@ async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
 
         retriever = HybridRetriever(repo, embedder, cfg, reranker=reranker)
         return await answer_query(llm, retriever, query, depth=depth)
+    finally:
+        await db.close()
+
+
+async def run_lint(home: Path, *, fix: bool) -> list[LintFinding]:
+    """Audit the wiki for broken links, orphans, missing citations, and staleness.
+
+    Builds a :class:`~wikiforge.lint.linter.WikiLinter` bound to ``home`` (so a
+    ``--fix`` pass can rewrite on-disk Markdown, not just the DB row), runs
+    :meth:`~wikiforge.lint.linter.WikiLinter.lint`, and — when ``fix`` is set —
+    immediately applies :meth:`~wikiforge.lint.linter.WikiLinter.fix` to every
+    finding it just found. Returns the findings from the lint pass (i.e. what
+    was reported, whether or not they were then repaired).
+    """
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        linter = WikiLinter(repo, home=home)
+        findings = await linter.lint()
+        if fix:
+            await linter.fix(findings)
+        return findings
     finally:
         await db.close()
