@@ -86,11 +86,10 @@ class ResearchOrchestrator:
             SESSION_CTX.reset(token)
 
         spent = await self._repo.session_spend(session_id)
-        final_done = await self._repo.personas_with_findings(session_id)
-        complete = final_done >= set(personas)
-        status = (
-            SessionStatus.DONE if (complete and not stopped_for_budget) else SessionStatus.PARTIAL
-        )
+        # PARTIAL only when a budget cap stopped the round early; otherwise every wave ran
+        # (DONE). Per-persona failures surface via AgentResult, not session status, so a
+        # deterministic agent failure does not trap the session in a resume-forever PARTIAL.
+        status = SessionStatus.PARTIAL if stopped_for_budget else SessionStatus.DONE
         await self._repo.update_session(
             session_id,
             status=status,
@@ -103,7 +102,10 @@ class ResearchOrchestrator:
         return result
 
     async def _run_agent(self, session_id: int, topic_title: str, persona: str) -> AgentResult:
-        """Run one persona agent: search, persist finding, normalize. Never raises."""
+        """Run one persona agent (search -> persist evidence -> normalize -> record finding).
+
+        Never raises.
+        """
         try:
             system = persona_system_prompt(persona)
             completion = await self._llm.complete(

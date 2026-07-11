@@ -98,6 +98,42 @@ async def test_budget_stops_between_waves(env) -> None:
     assert len(done) == 3  # only the first wave completed
 
 
+async def test_flaky_agent_does_not_abort_round(env) -> None:
+    cfg, repo, tracker, tid = env
+
+    class FlakyLLM(FakeLLM):
+        async def complete(
+            self,
+            purpose,
+            system,
+            user,
+            *,
+            tier=None,
+            use_web_search=False,
+            topic_id=None,
+            session_id=None,
+        ):
+            if "'contrarian'" in system:  # persona name appears in the persona system prompt
+                raise RuntimeError("simulated search failure")
+            return await super().complete(
+                purpose,
+                system,
+                user,
+                tier=tier,
+                use_web_search=use_web_search,
+                topic_id=topic_id,
+                session_id=session_id,
+            )
+
+    orch = ResearchOrchestrator(FlakyLLM(repo, cost_per_call=0.01), repo, cfg)
+    session = await orch.research(topic_id=tid, topic_title="Topic", mode="standard")
+    # Every wave ran (no budget stop) -> DONE, even though one persona failed.
+    assert session.status is SessionStatus.DONE
+    done = await repo.personas_with_findings(session.id)
+    assert "contrarian" not in done  # the flaky persona produced no finding
+    assert len(done) == 4  # the other four succeeded; the round was not aborted
+
+
 async def test_resume_reruns_only_unfinished(env) -> None:
     cfg, repo, tracker, tid = env
     orch = ResearchOrchestrator(FakeLLM(repo, cost_per_call=0.5), repo, cfg)
