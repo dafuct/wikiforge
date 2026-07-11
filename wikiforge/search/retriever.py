@@ -1,0 +1,66 @@
+"""Hybrid FTS5 + sqlite-vec retrieval merged with Reciprocal Rank Fusion."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+from wikiforge.config.settings import Config
+from wikiforge.embed.provider import EmbeddingProvider
+from wikiforge.models.enums import QueryDepth, TopicStatus
+from wikiforge.search.rrf import ChunkTarget, reciprocal_rank_fusion
+from wikiforge.storage.repository import Repository
+
+Reranker = Callable[[str, list[str]], list[float]]
+_CANDIDATE_MULTIPLIER = 3
+
+
+class HybridRetriever:
+    """Retrieves chunks by fusing FTS5 BM25 and sqlite-vec KNN rankings via RRF."""
+
+    def __init__(
+        self,
+        repo: Repository,
+        embedder: EmbeddingProvider,
+        config: Config,
+        *,
+        reranker: Reranker | None = None,
+    ) -> None:
+        """Bind the retriever to a repository, embedder, config, and optional reranker."""
+        self._repo = repo
+        self._embedder = embedder
+        self._config = config
+        self._reranker = reranker
+
+    async def retrieve(
+        self, query: str, *, depth: str = "standard", include_archived: bool = False
+    ) -> list[ChunkTarget]:
+        """Return the top-K chunks for a query, fused from FTS + vector search.
+
+        ``quick``/``standard`` search article chunks; ``deep`` also searches raw
+        sources and reranks with the injected cross-encoder. Archived topics are
+        excluded unless ``include_archived``.
+        """
+        owner_types = ["article", "raw_source"] if depth == QueryDepth.DEEP else ["article"]
+        top_k = self._config.retrieval.top_k
+        candidate_limit = top_k * _CANDIDATE_MULTIPLIER
+
+        (query_vec,) = await self._embedder.embed([query])
+        fts_ids = await self._repo.fts_search(query, owner_types, candidate_limit)
+        vec_ids = await self._repo.vec_search(query_vec, owner_types, candidate_limit)
+
+        fused = reciprocal_rank_fusion([fts_ids, vec_ids], k=self._config.retrieval.rrf_k)
+        targets = await self._repo.chunk_targets([rowid for rowid, _ in fused])
+
+        if not include_archived:
+            targets = [t for t in targets if t.topic_status != TopicStatus.ARCHIVED]
+
+        if depth == QueryDepth.DEEP and self._reranker is not None and targets:
+            scores = self._reranker(query, [t.text for t in targets])
+            targets = [
+                t
+                for t, _ in sorted(
+                    zip(targets, scores, strict=True), key=lambda p: p[1], reverse=True
+                )
+            ]
+
+        return targets[:top_k]
