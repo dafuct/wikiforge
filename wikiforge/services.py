@@ -36,6 +36,7 @@ from wikiforge.models.enums import ExportTarget, OutputKind, QueryDepth
 from wikiforge.output.exporter import Exporter
 from wikiforge.output.generator import OutputGenerator
 from wikiforge.query.service import QueryResult
+from wikiforge.research.progress import ResearchReporter
 from wikiforge.search.index import index_owner
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
@@ -167,6 +168,7 @@ async def run_research(
     new_topic: bool,
     budget_usd: float | None,
     resume_session_id: int | None,
+    reporter: ResearchReporter | None = None,
 ) -> ResearchSession:
     """Run (or resume) a research session for a topic.
 
@@ -174,7 +176,8 @@ async def run_research(
     when ``new_topic`` is set (with volatility inferred via
     :func:`~wikiforge.research.volatility.infer_volatility`); otherwise a
     ``ValueError`` is raised. Delegates the actual persona fan-out to
-    :class:`~wikiforge.research.orchestrator.ResearchOrchestrator`.
+    :class:`~wikiforge.research.orchestrator.ResearchOrchestrator`. ``reporter``
+    is forwarded to the orchestrator for live progress (default: no-op).
     """
     from anthropic import AsyncAnthropic
 
@@ -208,6 +211,7 @@ async def run_research(
             mode=mode,
             budget_usd=budget_usd,
             resume_session_id=resume_session_id,
+            reporter=reporter,
         )
     finally:
         await db.close()

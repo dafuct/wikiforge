@@ -122,20 +122,24 @@ def research(
     ),
 ) -> None:
     """Research a topic across persona agents, gathering and normalizing findings."""
+    from wikiforge.cli.live import LiveResearchTable
     from wikiforge.services import run_research
 
     target_home = resolve_home(home)
+    reporter = LiveResearchTable()
     try:
-        session = asyncio.run(
-            run_research(
-                target_home,
-                topic,
-                mode=mode,
-                new_topic=new_topic,
-                budget_usd=budget,
-                resume_session_id=resume,
+        with reporter:
+            session = asyncio.run(
+                run_research(
+                    target_home,
+                    topic,
+                    mode=mode,
+                    new_topic=new_topic,
+                    budget_usd=budget,
+                    resume_session_id=resume,
+                    reporter=reporter,
+                )
             )
-        )
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from None
