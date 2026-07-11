@@ -183,6 +183,29 @@ def related(
         typer.echo(f"{related_topic.slug}  {score:.4f}")
 
 
+DepthOption = typer.Option(
+    "standard", "--depth", help="Retrieval effort: quick, standard, or deep."
+)
+
+
+@app.command()
+def query(
+    question: str = typer.Argument(..., help="The question to ask the wiki."),
+    home: str | None = HomeOption,
+    depth: str = DepthOption,
+) -> None:
+    """Answer a question from the wiki's compiled knowledge, citing sources."""
+    from wikiforge.services import run_query
+
+    target_home = resolve_home(home)
+    result = asyncio.run(run_query(target_home, question, depth=depth))
+    typer.echo(result.answer)
+    if result.sources:
+        typer.echo("\nSources:")
+        for source in result.sources:
+            typer.echo(f"  {source.owner_type}:{source.owner_id}#{source.seq}")
+
+
 def main() -> None:
     """Console-script entry point."""
     app()

@@ -21,6 +21,8 @@ from wikiforge.embed.factory import effective_embedding_dim
 from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.ingest import sources as ingest_sources
 from wikiforge.models.domain import Article, RawSource, ResearchSession, ThesisVerdict, Topic
+from wikiforge.models.enums import QueryDepth
+from wikiforge.query.service import QueryResult
 from wikiforge.search.index import index_owner
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
@@ -253,5 +255,48 @@ async def run_related(home: Path, topic_text: str) -> list[tuple[Topic, float]]:
         if topic.id is None:
             raise RuntimeError(f"topic {slug!r} has no id")
         return await related_topics(repo, topic.id)
+    finally:
+        await db.close()
+
+
+async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
+    """Answer a question against the wiki, citing the retrieved chunks it relied on.
+
+    Assembles the real ``AnthropicProvider``, the factory-selected embedding provider,
+    and a ``HybridRetriever``, then delegates to
+    :func:`~wikiforge.query.service.answer_query`. For ``depth="deep"`` a real
+    sentence-transformers ``CrossEncoder`` (``retrieval.rerank_model``) is lazily built
+    and wired in as the reranker; ``quick``/``standard`` queries never load it.
+    """
+    from anthropic import AsyncAnthropic
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.embed.factory import build_embedding_provider
+    from wikiforge.llm.anthropic_provider import AnthropicProvider
+    from wikiforge.query.service import answer_query
+    from wikiforge.search.retriever import HybridRetriever, Reranker
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        tracker = CostTracker(repo, cfg)
+        llm = AnthropicProvider(AsyncAnthropic(), tracker, cfg)
+        embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
+
+        reranker: Reranker | None = None
+        if depth == QueryDepth.DEEP:
+            from sentence_transformers import CrossEncoder
+
+            cross_encoder = CrossEncoder(cfg.retrieval.rerank_model)
+
+            def _rerank(q: str, docs: list[str]) -> list[float]:
+                scores = cross_encoder.predict([(q, doc) for doc in docs])
+                return [float(s) for s in scores]
+
+            reranker = _rerank
+
+        retriever = HybridRetriever(repo, embedder, cfg, reranker=reranker)
+        return await answer_query(llm, retriever, query, depth=depth)
     finally:
         await db.close()
