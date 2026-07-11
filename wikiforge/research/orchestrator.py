@@ -9,11 +9,13 @@ from datetime import UTC, datetime
 
 from wikiforge.config.settings import Config
 from wikiforge.llm.provider import LLMProvider
+from wikiforge.llm.safety import seal_source_data
 from wikiforge.models.domain import RawSource, ResearchFinding, ResearchSession, ThesisVerdict
 from wikiforge.models.enums import SessionStatus, SourceType, Stance
 from wikiforge.models.schemas import ResearchFindingOut, ThesisVerdictOut
 from wikiforge.research.context import SESSION_CTX, AgentResult, SessionContext
 from wikiforge.research.personas import persona_system_prompt, thesis_system_prompt
+from wikiforge.research.progress import NullReporter, ResearchReporter
 from wikiforge.storage.repository import Repository
 
 _WAVE_SIZE = 3
@@ -36,6 +38,7 @@ class ResearchOrchestrator:
         mode: str,
         budget_usd: float | None = None,
         resume_session_id: int | None = None,
+        reporter: ResearchReporter | None = None,
     ) -> ResearchSession:
         """Run (or resume) a research session over the personas for ``mode``.
 
@@ -48,7 +51,10 @@ class ResearchOrchestrator:
         TOTAL-session cap, measured against cumulative session spend (prior
         spend counts toward it) — it does not re-read the original session's
         stored budget. Pass no budget to run the remaining personas uncapped.
+        ``reporter`` (default :class:`~wikiforge.research.progress.NullReporter`)
+        receives progress events for a live-rendering caller such as the CLI.
         """
+        rep = reporter or NullReporter()
         personas = self._config.personas_for_mode(mode)
         if resume_session_id is not None:
             session_id = resume_session_id
@@ -64,6 +70,7 @@ class ResearchOrchestrator:
 
         done = await self._repo.personas_with_findings(session_id)
         todo = [p for p in personas if p not in done]
+        rep.on_start(todo)
 
         ctx = SessionContext(session_id=session_id, topic=topic_title, trace_id=uuid.uuid4().hex)
         token = SESSION_CTX.set(ctx)
@@ -79,10 +86,12 @@ class ResearchOrchestrator:
                 wave = todo[wave_start : wave_start + _WAVE_SIZE]
                 async with asyncio.TaskGroup() as tg:
                     tasks = [
-                        tg.create_task(self._run_agent(session_id, topic_title, p)) for p in wave
+                        tg.create_task(self._run_agent(session_id, topic_title, p, rep))
+                        for p in wave
                     ]
                 # AgentResult never raises; a failed agent is recorded but non-fatal.
                 _ = [t.result() for t in tasks]
+                rep.on_wave_complete(spend_usd=await self._repo.session_spend(session_id))
         finally:
             SESSION_CTX.reset(token)
 
@@ -139,7 +148,7 @@ class ResearchOrchestrator:
         blocks = (
             "\n\n".join(
                 f"<source_data id='{e.source_id}' stance='{e.stance}' persona='{e.persona}'>"
-                f"{e.source_text}</source_data>"
+                f"{seal_source_data(e.source_text)}</source_data>"
                 for e in evidence
             )
             or "(no evidence gathered)"
@@ -214,11 +223,14 @@ class ResearchOrchestrator:
         except Exception as exc:  # noqa: BLE001 — agents must never abort the round
             return AgentResult(persona=persona, ok=False, error=repr(exc))
 
-    async def _run_agent(self, session_id: int, topic_title: str, persona: str) -> AgentResult:
+    async def _run_agent(
+        self, session_id: int, topic_title: str, persona: str, reporter: ResearchReporter
+    ) -> AgentResult:
         """Run one persona agent (search -> persist evidence -> normalize -> record finding).
 
         Never raises.
         """
+        reporter.on_agent_start(persona)
         try:
             system = persona_system_prompt(persona)
             completion = await self._llm.complete(
@@ -243,7 +255,7 @@ class ResearchOrchestrator:
             normalized = await self._llm.parse(
                 "normalize",
                 "Normalize this research finding into the schema.",
-                f"<source_data>{completion.text}</source_data>",
+                f"<source_data>{seal_source_data(completion.text)}</source_data>",
                 tier="cheap",
                 schema=ResearchFindingOut,
                 session_id=session_id,
@@ -257,9 +269,11 @@ class ResearchOrchestrator:
                     stance=_stance_of(normalized.parsed.stance),
                 )
             )
-            return AgentResult(persona=persona, ok=True, finding_id=finding_id)
+            result = AgentResult(persona=persona, ok=True, finding_id=finding_id)
         except Exception as exc:  # noqa: BLE001 — agents must never abort the round
-            return AgentResult(persona=persona, ok=False, error=repr(exc))
+            result = AgentResult(persona=persona, ok=False, error=repr(exc))
+        reporter.on_agent_finish(result)
+        return result
 
 
 def _finding_hash(session_id: int, persona: str, text: str) -> str:

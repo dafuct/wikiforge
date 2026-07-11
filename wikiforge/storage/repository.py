@@ -16,6 +16,7 @@ import aiosql
 from wikiforge.models.domain import (
     ActivityEntry,
     Article,
+    Conflict,
     Dataset,
     EmbeddingCacheEntry,
     Feedback,
@@ -205,6 +206,21 @@ class Repository:
         async for row in self._q.cost_by_model(self._db.conn):
             totals[row["model"]] = float(row["total"])
         return totals
+
+    async def entity_counts(self) -> dict[str, int]:
+        """Return row counts for topics, articles, raw_sources, and research_sessions."""
+        row = await self._q.entity_counts(self._db.conn)
+        return {
+            "topics": int(row["topics"]),
+            "articles": int(row["articles"]),
+            "raw_sources": int(row["raw_sources"]),
+            "sessions": int(row["sessions"]),
+        }
+
+    async def cost_and_calls_since(self, since_iso: str) -> tuple[int, float]:
+        """Return (llm call count, summed cost_usd) for calls at or after ``since_iso``."""
+        row = await self._q.cost_and_calls_since(self._db.conn, since=since_iso)
+        return int(row["calls"]), float(row["cost"])
 
     async def recent_activity(self, limit: int) -> list[ActivityEntry]:
         """Return the most recent activity rows, newest first, as domain records."""
@@ -570,6 +586,21 @@ class Repository:
                 source_ids=json.dumps(source_ids),
             )
             await self._db.conn.commit()
+
+    async def conflicts_for_topic(self, topic_id: int) -> list[Conflict]:
+        """Return all detected conflicts for a topic, oldest first."""
+        return [
+            Conflict(
+                id=r["id"],
+                topic_id=r["topic_id"],
+                article_id=r["article_id"],
+                claim=r["claim"],
+                nature=r["nature"],
+                source_ids=json.loads(r["source_ids"]) if r["source_ids"] else [],
+                detected_at=r["detected_at"],
+            )
+            async for r in self._q.conflicts_for_topic(self._db.conn, topic_id=topic_id)
+        ]
 
     async def list_topics(self, status: TopicStatus = TopicStatus.ACTIVE) -> list[Topic]:
         """Return topics with the given lifecycle status, ordered by id."""
