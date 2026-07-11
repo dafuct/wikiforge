@@ -54,34 +54,12 @@ def ingest(
     home: str | None = HomeOption,
 ) -> None:
     """Ingest a source (URL, PDF, or file) into the wiki."""
-    import httpx
-
-    from wikiforge.activity.cost import CostTracker
-    from wikiforge.config.settings import load_config
-    from wikiforge.embed.factory import build_embedding_provider, effective_embedding_dim
-    from wikiforge.services import ingest_source
-    from wikiforge.storage.db import Database
-    from wikiforge.storage.repository import Repository
+    from wikiforge.services import run_ingest
 
     target_home = resolve_home(home)
-
-    async def _run() -> tuple[str, bool]:
-        cfg = load_config(target_home)
-        db = await Database.open(target_home, dim=effective_embedding_dim(cfg))
-        try:
-            repo = Repository(db)
-            embedder = build_embedding_provider(cfg, repo, cost_tracker=CostTracker(repo, cfg))
-            async with httpx.AsyncClient() as client:
-                src, created = await ingest_source(
-                    target_home, target, http_client=client, embedder=embedder, _db=db
-                )
-            return src.title, created
-        finally:
-            await db.close()
-
-    title, created = asyncio.run(_run())
+    source, created = asyncio.run(run_ingest(target_home, target))
     verb = "Ingested" if created else "Re-ingested (dedup)"
-    typer.echo(f"{verb}: {title}")
+    typer.echo(f"{verb}: {source.title}")
 
 
 @app.command()
@@ -437,6 +415,14 @@ def export(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from None
     typer.echo(f"Exported {target} to {written}")
+
+
+@app.command(name="serve-mcp")
+def serve_mcp(home: str | None = HomeOption) -> None:
+    """Serve the wiki over the Model Context Protocol (stdio transport)."""
+    from wikiforge.mcp.server import build_server
+
+    build_server(resolve_home(home)).run(transport="stdio")
 
 
 def main() -> None:
