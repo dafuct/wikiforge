@@ -229,6 +229,31 @@ def query(
 
 
 @app.command()
+def generate(
+    kind: str = typer.Argument(
+        ...,
+        help="report | slides-outline | summary | study-guide | timeline | glossary | comparison.",
+    ),
+    topic: str = typer.Argument(..., help="Topic slug or title to generate from."),
+    home: str | None = HomeOption,
+    out: str | None = typer.Option(None, "--out", help="Write the output to this file path."),
+) -> None:
+    """Generate a derived document from a topic's compiled article."""
+    from wikiforge.services import run_generate
+
+    out_path = Path(out) if out is not None else None
+    try:
+        text = asyncio.run(run_generate(resolve_home(home), kind, topic, out=out_path))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    if out_path is not None:
+        typer.echo(f"Wrote {kind} for {topic!r} to {out_path}")
+    else:
+        typer.echo(text)
+
+
+@app.command()
 def lint(
     home: str | None = HomeOption,
     fix: bool = typer.Option(
