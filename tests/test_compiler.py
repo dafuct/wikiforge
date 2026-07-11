@@ -102,6 +102,16 @@ async def test_compile_writes_article_and_markdown(env) -> None:
     latest = await repo.latest_article_for_topic(tid)
     assert latest is not None and 0.0 <= latest.confidence <= 1.0
 
+    import json
+
+    rows = await repo._db.fetchall("SELECT source_ids FROM conflicts")
+    assert len(rows) == 1
+    stored_ids = json.loads(rows[0]["source_ids"])
+    assert all(
+        isinstance(x, int) for x in stored_ids
+    )  # resolved to raw_source ids, not model strings
+    assert len(stored_ids) == 1  # "s1" resolved; "s2" (not a stored source) dropped
+
 
 async def test_incremental_skip_and_force(env) -> None:
     cfg, repo, tid, home = env

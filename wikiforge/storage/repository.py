@@ -496,7 +496,7 @@ class Repository:
             await self._db.conn.commit()
 
     async def insert_conflict(
-        self, topic_id: int, article_id: int, claim: str, nature: str, source_ids: list[str]
+        self, topic_id: int, article_id: int, claim: str, nature: str, source_ids: list[int]
     ) -> None:
         """Record a detected disagreement between sources for a topic/article."""
         async with self._db.lock:

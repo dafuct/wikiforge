@@ -141,8 +141,9 @@ class Compiler:
             if src_id is not None:
                 await self._repo.insert_citation(article_id, cit.claim, src_id, cit.quote)
         for conflict in compiled.conflicts:
+            resolved = [by_hash[sid] for sid in conflict.source_ids if sid in by_hash]
             await self._repo.insert_conflict(
-                topic_id, article_id, conflict.claim, conflict.nature, conflict.source_ids
+                topic_id, article_id, conflict.claim, conflict.nature, resolved
             )
 
     async def _see_also(self, topic_id: int) -> list[tuple[str, str]]:
