@@ -437,6 +437,42 @@ def serve_mcp(home: str | None = HomeOption) -> None:
     build_server(resolve_home(home)).run(transport="stdio")
 
 
+@app.command()
+def capture(
+    home: str | None = HomeOption,
+    hook: bool = typer.Option(False, "--hook", help="Read Claude Code Stop-hook JSON from stdin."),
+    note: str | None = typer.Option(None, "--note", help="Manually capture this request/decision."),
+    type_: str | None = typer.Option(
+        None, "--type", help="Event type label (feature/bugfix/research/design/...)."
+    ),
+) -> None:
+    """Record a development event: auto from a Stop hook (--hook), or a manual --note."""
+    import sys
+
+    from wikiforge.paths import resolve_capture_home
+
+    target_home = resolve_capture_home(home)
+    if hook:
+        stdin = sys.stdin.read() if not sys.stdin.isatty() else ""
+        try:
+            from wikiforge.services import run_capture_hook
+
+            asyncio.run(run_capture_hook(target_home, stdin))
+        except Exception:
+            pass  # a Stop hook must never break the session
+        return
+    if note is None:
+        typer.echo("Error: provide --note TEXT or --hook")
+        raise typer.Exit(code=1)
+    from wikiforge.services import run_capture_note
+
+    source = asyncio.run(run_capture_note(target_home, note, event_type=type_))
+    if source is None:
+        typer.echo("No wiki initialized here; nothing captured.")
+        return
+    typer.echo(f"Captured dev event: {source.title}")
+
+
 def main() -> None:
     """Console-script entry point."""
     app()
