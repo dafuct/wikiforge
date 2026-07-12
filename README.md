@@ -122,7 +122,9 @@ never have to commit for the wiki to remember.
   found and why it matters"`.
 - **Where it lands:** the project-local `.wikiforge/` if present, else your default wiki.
   Run `wiki init` there first.
-- **Read it back:** `wiki query "why did we change the retriever?"`.
+- **Read it back:** `wiki query --depth deep "why did we change the retriever?"`. Dev events are
+  indexed as raw sources, not compiled into articles, so only `--depth deep` searches them — the
+  default (`standard`) depth won't surface them.
 - **Privacy / control:** the raw request is stored (best-effort secret redaction). Turn it
   off with `[capture] auto = false`, or raw-only with `summarize = false`, in `config.toml`.
 

@@ -97,6 +97,27 @@ async def test_llm_failure_falls_back(tmp_path: Path) -> None:
         await db.close()
 
 
+async def test_capture_persists_when_indexing_fails(tmp_path: Path, monkeypatch) -> None:
+    db, repo, cfg = await _wiki(tmp_path)
+    import wikiforge.ops.capture as capmod
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("index blew up")
+
+    monkeypatch.setattr(capmod, "index_owner_fts", _boom)
+    try:
+        src = await capture_event(
+            repo, request="fix retriever", files=["a.py"], event_type="bugfix",
+            default_type="change", origin="hook", cfg=cfg,
+            llm=_FakeLLM(DevEventDigest(summary="Fixed.", type="bugfix")),
+            now=_NOW, git_runner=lambda argv: "",
+        )
+        assert src is not None
+        assert await repo.get_raw_source_by_hash(src.content_hash) is not None
+    finally:
+        await db.close()
+
+
 async def test_summarize_disabled(tmp_path: Path) -> None:
     db, repo, cfg = await _wiki(tmp_path)
     cfg.capture.summarize = False
