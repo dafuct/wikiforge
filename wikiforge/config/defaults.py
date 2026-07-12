@@ -79,4 +79,11 @@ conflict_penalty_cap = 0.4
 # "api" = Anthropic developer API (needs an API key / credits from console.anthropic.com).
 # "subscription" = Claude Code CLI (`claude -p`), uses your Claude subscription (no API credits).
 backend = "api"
+
+[capture]
+auto = true               # auto-capture when Claude Code task changed files
+summarize = true          # LLM summary + classification (cheap tier); false = raw list
+topic_label = "development-log"   # provenance label grouping these events
+max_diff_lines = 200      # cap on stored `git diff --stat` output
+redact = true             # scrub obvious secrets from the stored request text
 """

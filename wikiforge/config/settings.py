@@ -108,6 +108,18 @@ class LlmConfig(BaseModel):
     backend: LlmBackend = LlmBackend.API
 
 
+class CaptureConfig(BaseModel):
+    """Development-cycle capture settings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    auto: bool = True
+    summarize: bool = True
+    topic_label: str = "development-log"
+    max_diff_lines: int = 200
+    redact: bool = True
+
+
 class Config(BaseModel):
     """The fully parsed ``config.toml``."""
 
@@ -123,6 +135,7 @@ class Config(BaseModel):
     research: ResearchConfig
     confidence: ConfidenceConfig
     llm: LlmConfig = LlmConfig()
+    capture: CaptureConfig = CaptureConfig()
 
     def model_for_task(self, task: str, tier: str | None = None) -> str:
         """Resolve a task (and optional explicit tier override) to a model ID.

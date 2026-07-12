@@ -28,6 +28,7 @@ class SourceType(StrEnum):
     PDF = "pdf"
     TEXT = "text"
     FINDING = "finding"
+    DEV_EVENT = "dev_event"
 
 
 class SessionStatus(StrEnum):
