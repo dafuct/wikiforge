@@ -1,11 +1,39 @@
 # wikiforge
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-8A63D2)
+![Python](https://img.shields.io/badge/Python-3.13%2B-3776AB)
+
 A local-first, tool-agnostic **personal knowledge base compiler**. wikiforge researches topics with parallel LLM agents, compiles the gathered evidence into cited, confidence-scored Markdown articles, and answers questions over that knowledge with hybrid retrieval — all backed by a single local SQLite file you own.
 
 - **Local-first** — one SQLite database (WAL, FTS5 full-text + `sqlite-vec` vectors). No server, no cloud state. Your `~/wiki` is the whole system of record.
 - **Provenance everywhere** — every finding, citation, and conflict traces back to an immutable raw source and the research session that produced it.
 - **Two thin surfaces, one core** — a `rich` Typer CLI and a `fastmcp` MCP server are both thin wrappers over one shared service layer. Nothing is implemented twice.
 - **Injection-aware** — all ingested/fetched text is treated as untrusted data: wrapped in `<source_data>` tags and sealed against delimiter breakout before it ever reaches a model.
+
+---
+
+## Install as a Claude Code plugin
+
+The repository doubles as a [Claude Code](https://claude.com/claude-code) plugin — `/wikiforge:*` slash commands plus MCP tools, running on your **Claude subscription** (no API credits) or an Anthropic API key.
+
+```text
+/plugin marketplace add dafuct/wikiforge
+/plugin install wikiforge@wikiforge
+```
+
+At install you choose the LLM backend (`subscription` or `api`); the first session bootstraps the bundled `wiki` CLI via `uv` (a few minutes on first run). Then:
+
+```text
+/wikiforge:init             # create a knowledge base for this project
+/wikiforge:research "..."   # gather knowledge (or /wikiforge:ingest <url|pdf|file>)
+/wikiforge:compile          # synthesize cited articles
+/wikiforge:query "..."      # cited answers
+```
+
+Requires [`uv`](https://docs.astral.sh/uv/) plus either a logged-in `claude` CLI (subscription) or an `ANTHROPIC_API_KEY` (API backend). Full setup, commands, and caveats: **[docs/PLUGIN.md](docs/PLUGIN.md)**.
+
+The rest of this README covers running wikiforge **from source** as a standalone CLI + MCP server.
 
 ---
 
