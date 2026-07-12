@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from wikiforge.llm.provider import LLMProvider
+from wikiforge.llm.safety import seal_source_data
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
@@ -163,8 +164,8 @@ async def summarize_event(llm: LLMProvider, *, request: str, diff: str) -> DevEv
     """Distill (summary, type) from the request + diff via the cheap-tier LLM."""
     user = (
         "<source_data>\n"
-        f"REQUEST:\n{request}\n\n"
-        f"DIFF STAT:\n{diff or '(no diff available)'}\n"
+        f"REQUEST:\n{seal_source_data(request)}\n\n"
+        f"DIFF STAT:\n{seal_source_data(diff) if diff else '(no diff available)'}\n"
         "</source_data>"
     )
     result = await llm.parse("capture", _DIGEST_SYSTEM, user, tier="cheap", schema=DevEventDigest)
