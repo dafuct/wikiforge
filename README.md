@@ -109,6 +109,25 @@ ingest / research  →  raw_sources (immutable)  →  chunks (FTS5 + vector inde
 
 ---
 
+## Capturing your development cycle
+
+wikiforge can remember *why* your code got to be the way it is. When a Claude Code
+task edits files, a `Stop` hook records a **dev event** — your request (the why), the
+changed files + `git diff --stat` (the what), a cheap-LLM summary, an inferred type
+(feature/bugfix/research/…), and the time. It captures **uncommitted** work, so you
+never have to commit for the wiki to remember.
+
+- **Automatic:** fires when a task changed files. No action needed.
+- **Research notes:** for investigations that changed no files, run `/wiki-note "what you
+  found and why it matters"`.
+- **Where it lands:** the project-local `.wikiforge/` if present, else your default wiki.
+  Run `wiki init` there first.
+- **Read it back:** `wiki query "why did we change the retriever?"`.
+- **Privacy / control:** the raw request is stored (best-effort secret redaction). Turn it
+  off with `[capture] auto = false`, or raw-only with `summarize = false`, in `config.toml`.
+
+---
+
 ## Command reference
 
 | Command | What it does |
