@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "wikiforge": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "wiki",
+        "serve-mcp",
+        "--home",
+        "${CLAUDE_PROJECT_DIR}/.wikiforge"
+      ],
+      "env": {
+        "WIKIFORGE_BACKEND": "${user_config.backend}",
+        "ANTHROPIC_API_KEY": "${user_config.api_key}"
+      }
+    }
+  }
+}
