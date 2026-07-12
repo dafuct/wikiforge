@@ -17,3 +17,6 @@ _scratch_demo/
 *.db
 *.db-wal
 *.db-shm
+
+# SDD working scratch (task briefs, reports, review diffs)
+.superpowers/
