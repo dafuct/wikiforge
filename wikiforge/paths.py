@@ -18,3 +18,17 @@ def resolve_home(explicit: str | Path | None = None) -> Path:
     if env:
         return Path(env).expanduser()
     return Path.home() / "wiki"
+
+
+def resolve_capture_home(explicit: str | Path | None = None) -> Path:
+    """Home for capture: ``--home`` → project-local ``./.wikiforge`` → ``resolve_home``.
+
+    Mirrors the plugin's slash commands, which target ``.wikiforge/`` in the
+    current project when present.
+    """
+    if explicit is not None:
+        return resolve_home(explicit)
+    local = Path.cwd() / ".wikiforge"
+    if local.exists():
+        return local
+    return resolve_home(None)

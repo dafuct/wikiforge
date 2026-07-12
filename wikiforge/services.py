@@ -578,3 +578,68 @@ async def run_export(home: Path, target: str, out: Path | None) -> Path:
         return await exporter.export(export_target, destination)
     finally:
         await db.close()
+
+
+async def run_capture_note(home: Path, note: str, *, event_type: str | None) -> RawSource | None:
+    """Manually capture a research/decision dev event (no file changes)."""
+    from datetime import UTC, datetime
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.llm.factory import build_llm_provider
+    from wikiforge.ops.capture import capture_event
+
+    if not (home / CONFIG_FILENAME).exists():
+        return None
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        try:
+            llm = build_llm_provider(cfg, CostTracker(repo, cfg))
+        except Exception:
+            llm = None
+        return await capture_event(
+            repo, request=note, files=[], event_type=event_type, default_type="research",
+            origin="manual", cfg=cfg, llm=llm, now=datetime.now(UTC),
+        )
+    finally:
+        await db.close()
+
+
+async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
+    """Auto-capture a dev event from a Claude Code Stop-hook payload (best-effort)."""
+    from datetime import UTC, datetime
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.llm.factory import build_llm_provider
+    from wikiforge.ops.capture import (
+        capture_event,
+        extract_turn,
+        parse_hook_stdin,
+        read_transcript,
+    )
+
+    if not (home / CONFIG_FILENAME).exists():
+        return None
+    cfg = load_config(home)
+    if not cfg.capture.auto:
+        return None
+    transcript_path = parse_hook_stdin(hook_stdin)
+    if transcript_path is None:
+        return None
+    turn = extract_turn(read_transcript(Path(transcript_path)))
+    if not turn.files:
+        return None
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        try:
+            llm = build_llm_provider(cfg, CostTracker(repo, cfg))
+        except Exception:
+            llm = None
+        return await capture_event(
+            repo, request=turn.request, files=turn.files, event_type=None,
+            default_type="change", origin="hook", cfg=cfg, llm=llm, now=datetime.now(UTC),
+        )
+    finally:
+        await db.close()
