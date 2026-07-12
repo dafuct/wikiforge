@@ -10,6 +10,16 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v wiki >/dev/null 2>&1 && wiki capture --hook; true"
+          }
+        ]
+      }
     ]
   }
 }
