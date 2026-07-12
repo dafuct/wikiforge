@@ -38,12 +38,15 @@ def parse_hook_stdin(raw: str) -> str | None:
 def read_transcript(path: Path) -> list[dict[str, Any]]:
     """Read a JSONL transcript into a list of dicts, tolerating blank/bad lines."""
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw_bytes = path.read_bytes()
     except OSError:
         return []
     out: list[dict[str, Any]] = []
-    for line in raw.splitlines():
-        line = line.strip()
+    for line_bytes in raw_bytes.split(b"\n"):
+        try:
+            line = line_bytes.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            continue
         if not line:
             continue
         try:

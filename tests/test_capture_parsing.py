@@ -73,3 +73,9 @@ def test_read_transcript_tolerates_blank_and_bad_lines(tmp_path: Path) -> None:
     p = tmp_path / "t.jsonl"
     p.write_text('{"a": 1}\n\nnot json\n{"b": 2}\n', encoding="utf-8")
     assert read_transcript(p) == [{"a": 1}, {"b": 2}]
+
+
+def test_read_transcript_tolerates_non_utf8(tmp_path: Path) -> None:
+    p = tmp_path / "t.jsonl"
+    p.write_bytes(b'{"a": 1}\n\xff\xfe not utf-8\n')
+    assert read_transcript(p) == [{"a": 1}]
