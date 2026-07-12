@@ -447,23 +447,26 @@ def capture(
     ),
 ) -> None:
     """Record a development event: auto from a Stop hook (--hook), or a manual --note."""
-    import sys
-
-    from wikiforge.paths import resolve_capture_home
-
-    target_home = resolve_capture_home(home)
     if hook:
-        stdin = sys.stdin.read() if not sys.stdin.isatty() else ""
         try:
+            import sys
+
+            from wikiforge.paths import resolve_capture_home
             from wikiforge.services import run_capture_hook
 
+            target_home = resolve_capture_home(home)
+            stdin = sys.stdin.read() if not sys.stdin.isatty() else ""
             asyncio.run(run_capture_hook(target_home, stdin))
         except Exception:
             pass  # a Stop hook must never break the session
         return
+
+    from wikiforge.paths import resolve_capture_home
+
+    target_home = resolve_capture_home(home)
     if note is None:
-        typer.echo("Error: provide --note TEXT or --hook")
-        raise typer.Exit(code=1)
+        typer.echo("Error: provide --note TEXT or --hook", err=True)
+        raise typer.Exit(code=1) from None
     from wikiforge.services import run_capture_note
 
     source = asyncio.run(run_capture_note(target_home, note, event_type=type_))

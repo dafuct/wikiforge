@@ -46,10 +46,21 @@ def test_capture_note(tmp_path: Path) -> None:
 def test_capture_requires_note_or_hook(tmp_path: Path) -> None:
     result = runner.invoke(app, ["capture", "--home", str(tmp_path)])
     assert result.exit_code == 1
-    assert "provide --note" in result.stdout
+    assert "provide --note" in result.output
 
 
 def test_capture_hook_never_fails_without_wiki(tmp_path: Path) -> None:
     stdin = json.dumps({"transcript_path": str(tmp_path / "none.jsonl")})
     result = runner.invoke(app, ["capture", "--home", str(tmp_path), "--hook"], input=stdin)
     assert result.exit_code == 0  # exit 0 even with no wiki / no transcript
+
+
+def test_capture_hook_never_fails_on_home_error(monkeypatch) -> None:
+    import wikiforge.paths as paths
+
+    def boom(_home):
+        raise FileNotFoundError("cwd gone")
+
+    monkeypatch.setattr(paths, "resolve_capture_home", boom)
+    result = runner.invoke(app, ["capture", "--hook"], input="{}")
+    assert result.exit_code == 0
