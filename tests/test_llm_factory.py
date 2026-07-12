@@ -10,9 +10,20 @@ from wikiforge.activity.cost import CostTracker
 from wikiforge.config.settings import load_config, write_default_config
 from wikiforge.llm.anthropic_provider import AnthropicProvider
 from wikiforge.llm.claude_code_provider import ClaudeCodeProvider
-from wikiforge.llm.factory import build_llm_provider
+from wikiforge.llm.factory import build_llm_provider, resolve_backend
+from wikiforge.models.enums import LlmBackend
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
+
+
+def test_env_var_overrides_config_backend(wiki_home: Path) -> None:
+    write_default_config(wiki_home, wiki_name="x")
+    cfg = load_config(wiki_home)  # default backend = api
+    assert resolve_backend(cfg, env={}) is LlmBackend.API
+    sub = resolve_backend(cfg, env={"WIKIFORGE_BACKEND": "subscription"})
+    assert sub is LlmBackend.SUBSCRIPTION
+    with pytest.raises(ValueError):
+        resolve_backend(cfg, env={"WIKIFORGE_BACKEND": "bogus"})
 
 
 async def _tracker(home: Path) -> tuple[CostTracker, Database]:
