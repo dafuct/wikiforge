@@ -118,7 +118,7 @@ changed files + `git diff --stat` (the what), a cheap-LLM summary, an inferred t
 never have to commit for the wiki to remember.
 
 - **Automatic:** fires when a task changed files. No action needed.
-- **Research notes:** for investigations that changed no files, run `/wiki-note "what you
+- **Research notes:** for investigations that changed no files, run `/wikiforge:wiki-note "what you
   found and why it matters"`.
 - **Where it lands:** the project-local `.wikiforge/` if present, else your default wiki.
   Run `wiki init` there first.
