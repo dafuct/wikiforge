@@ -15,6 +15,7 @@ def test_stop_hook_registered() -> None:
     assert any("wiki capture --hook" in c for c in commands)
     # Guarded so a missing CLI can never break the session.
     assert all("command -v wiki" in c for c in commands)
+    assert all(c.rstrip().endswith("; true") for c in commands)
 
 
 def test_wiki_note_command_exists() -> None:
