@@ -46,6 +46,16 @@ On the first session after install, a background hook runs `uv tool install` to 
 | `/wikiforge:export <obsidian\|site\|json>` | Export the base | — |
 | `/wikiforge:related <topic>` | Knowledge-graph neighbours | — |
 | `/wikiforge:stats` | Size + spend | — |
+| `/wikiforge:wiki-note <what & why>` | Record a research note / decision (dev event) | light |
+| `/wikiforge:thesis <claim>` | Evaluate a claim with FOR/AGAINST agents → cited verdict | LLM (heavy) |
+| `/wikiforge:lint [--fix]` | Audit broken links, orphans, missing citations, staleness | — |
+| `/wikiforge:audit <topic>` | Re-verify citation quotes against immutable sources | — |
+| `/wikiforge:refresh [--run]` | List (or `--run` re-research) stale topics | — / LLM |
+| `/wikiforge:collect <collection> <url\|path>` | Catalogue a source into a named collection | light |
+| `/wikiforge:dataset <name> <path>` | Track an on-disk dataset | — |
+| `/wikiforge:archive <topic>` | Archive a topic (excluded from default retrieval) | — |
+| `/wikiforge:feedback <target> <approve\|reject\|correct> [note]` | Record a verdict on an article/finding | — |
+| `/wikiforge:context` | Recent-activity digest for pasting into context | — |
 
 Every command auto-targets the wiki: a project-local `.wikiforge/` (created by `/wikiforge:init`) → `$WIKIFORGE_HOME` → `~/wiki`. The bundled **MCP server** also exposes the same capabilities as tools (search_knowledge, start_research, …) that Claude uses when you ask in natural language; see them with `/mcp`.
 
