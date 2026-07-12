@@ -1,0 +1,26 @@
+{
+  "name": "wikiforge",
+  "version": "0.1.0",
+  "description": "Local-first, LLM-curated personal knowledge base: research topics with parallel agents, compile cited/confidence-scored articles, and answer questions with hybrid retrieval — as slash commands and MCP tools. Runs on your Claude subscription (no API credits) or an Anthropic API key.",
+  "author": { "name": "dafuct" },
+  "homepage": "https://github.com/dafuct/wikiforge",
+  "repository": "https://github.com/dafuct/wikiforge",
+  "license": "MIT",
+  "keywords": ["knowledge-base", "wiki", "research", "second-brain", "rag", "citations", "mcp"],
+  "commands": "./commands/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "userConfig": {
+    "backend": {
+      "type": "string",
+      "title": "LLM backend",
+      "description": "How wikiforge's LLM calls are billed. Type \"subscription\" to use the Claude Code CLI on your Claude subscription (no API credits — needs `claude` installed and logged in), or \"api\" to use an Anthropic API key. Leave blank to decide per-wiki with /wikiforge:init."
+    },
+    "api_key": {
+      "type": "string",
+      "title": "Anthropic API key (only for the \"api\" backend)",
+      "description": "Your Anthropic developer API key (sk-ant-...). Only needed if you chose the \"api\" backend. Leave blank for \"subscription\".",
+      "sensitive": true
+    }
+  }
+}
