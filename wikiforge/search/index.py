@@ -38,3 +38,29 @@ async def index_owner(
         )
         await repo.insert_chunk_vector(rowid, vector)
     return len(chunks)
+
+
+async def index_owner_fts(
+    repo: Repository,
+    *,
+    owner_type: str,
+    owner_id: int,
+    text: str,
+) -> int:
+    """Index an owner's text into chunks + FTS only (no vectors, no embedder).
+
+    The FTS5 ``AFTER INSERT`` trigger on ``chunks`` populates the keyword index
+    on each chunk insert, so the text is keyword-searchable without building an
+    embedding provider. Returns the number of chunks written.
+    """
+    await repo.delete_chunks_for_owner(owner_type, owner_id)
+    chunks = chunk_markdown(text)
+    for chunk in chunks:
+        await repo.insert_chunk(
+            owner_type=owner_type,
+            owner_id=owner_id,
+            seq=chunk.seq,
+            text=chunk.text,
+            content_hash=content_hash(chunk.text),
+        )
+    return len(chunks)
