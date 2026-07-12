@@ -10,7 +10,7 @@
 
 Today the wiki only grows when the user explicitly runs `ingest` / `research` / `compile`, and a `query` records nothing. There is no memory of *why the code got to be the way it is*: the spec/design/plan reasoning, the sequence of changes, and the intent behind each one. Those artifacts are often **not committed**, so a commit-based history misses them entirely.
 
-This feature makes the wiki accumulate a **development journal** as a side effect of normal work: for each task where the assistant edits files, one dated, typed, searchable *dev-event* note is stored, containing the user's request verbatim and a summary of what changed. Later, `wiki query "why did we change the retriever?"` can answer from that journal with citations. Research turns that touch no files are captured on demand via `/wiki-note`.
+This feature makes the wiki accumulate a **development journal** as a side effect of normal work: for each task where the assistant edits files, one dated, typed, searchable *dev-event* note is stored, containing the user's request verbatim and a summary of what changed. Later, `wiki query --depth deep "why did we change the retriever?"` can answer from that journal with citations. Research turns that touch no files are captured on demand via `/wiki-note`.
 
 ## 2. Scope & non-goals
 
@@ -77,7 +77,7 @@ wiki capture [--home DIR]
 - `--type` is a **free-form label** (not a closed enum), so callers can use `feature`, `bugfix`, `research`, `refactor`, `spec`, `design`, or their own; it defaults to `change` (auto path) and `research` (`/wiki-note`). It is stored verbatim in the title and provenance.
 - **The command must always exit 0** — it is invoked from a hook and must never break a Claude Code session (§12).
 
-**Service** — `capture_event(repo, …)` in `wikiforge/ops/capture.py` (ops functions take an open `Repository`, mirroring `ops/inventory.py`), with thin `run_capture_hook` / `run_capture_note` wrappers in `wikiforge/services.py` that open the DB and build providers. It constructs a `DEV_EVENT` `RawSource` from assembled text (mirroring `ingest_sources.ingest_text`) rather than fetching a URL/file, then runs the persist + activity path `ingest_source` uses (`repo.ingest_raw_source`, `ActivityRecorder.record`) and indexes the note **FTS-only** via a new `index_owner_fts` helper — chunk + `repo.insert_chunk`, whose FTS5 `AFTER INSERT` trigger populates the keyword index, so **no embedder is built**. Capture therefore stays fast and fully offline; vector/semantic indexing of dev events is deferred (§16). Events remain immediately queryable through the hybrid retriever's FTS arm.
+**Service** — `capture_event(repo, …)` in `wikiforge/ops/capture.py` (ops functions take an open `Repository`, mirroring `ops/inventory.py`), with thin `run_capture_hook` / `run_capture_note` wrappers in `wikiforge/services.py` that open the DB and build providers. It constructs a `DEV_EVENT` `RawSource` from assembled text (mirroring `ingest_sources.ingest_text`) rather than fetching a URL/file, then runs the persist + activity path `ingest_source` uses (`repo.ingest_raw_source`, `ActivityRecorder.record`) and indexes the note **FTS-only** via a new `index_owner_fts` helper — chunk + `repo.insert_chunk`, whose FTS5 `AFTER INSERT` trigger populates the keyword index, so **no embedder is built**. Capture therefore stays fast and fully offline; vector/semantic indexing of dev events is deferred (§16). Events are queryable via `wiki query --depth deep` — the hybrid retriever searches raw sources only at deep depth; normal/standard queries and article compilation do not surface them.
 
 ### 4.1 LLM summarization & classification
 
@@ -227,7 +227,7 @@ README gains a "Capturing your development cycle" section:
 - That it captures **uncommitted** work and needs no commits.
 - Per-project setup: set `WIKIFORGE_HOME` for the project so events land in that project's wiki; `wiki init` it first.
 - Privacy note: the raw request is stored (best-effort redacted); how to turn off `auto`.
-- How to read it back: `wiki query "why did we …"`.
+- How to read it back: `wiki query --depth deep "why did we …"` (deep depth is required — dev events are raw sources, not compiled articles).
 
 ## 15. Assumptions & decisions
 
