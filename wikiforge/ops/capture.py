@@ -7,13 +7,21 @@ import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
+from wikiforge.activity.recorder import ActivityRecorder
+from wikiforge.config.settings import Config
+from wikiforge.ingest.canonical import content_hash
 from wikiforge.llm.provider import LLMProvider
 from wikiforge.llm.safety import seal_source_data
+from wikiforge.models.domain import RawSource
+from wikiforge.models.enums import SourceType
+from wikiforge.search.index import index_owner_fts
+from wikiforge.storage.repository import Repository
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
@@ -193,3 +201,71 @@ def build_note(
         parts += ["```", diff_stat, "```", ""]
     parts += [f"## Type: {event_type}"]
     return "\n".join(parts)
+
+
+async def capture_event(
+    repo: Repository,
+    *,
+    request: str,
+    files: list[str],
+    event_type: str | None,
+    default_type: str,
+    origin: str,
+    cfg: Config,
+    llm: LLMProvider | None,
+    now: datetime,
+    git_runner: GitRunner = default_git_runner,
+) -> RawSource | None:
+    """Build, persist, FTS-index, and log one dev event; return the stored source.
+
+    ``event_type=None`` lets the LLM classify; a non-None value is used verbatim.
+    Any LLM failure (or ``[capture] summarize=false``) falls back to no summary and
+    ``default_type``. Indexing is best-effort — the source is persisted even if it fails.
+    """
+    if cfg.capture.redact:
+        request = redact_secrets(request)
+    diff_stat = git_diff_stat(files, runner=git_runner, max_lines=cfg.capture.max_diff_lines)
+
+    summary = ""
+    resolved_type = event_type
+    if cfg.capture.summarize and llm is not None and (request or diff_stat):
+        try:
+            digest = await summarize_event(llm, request=request, diff=diff_stat)
+            summary = digest.summary
+            if resolved_type is None:
+                resolved_type = digest.type
+        except Exception:
+            pass
+    if resolved_type is None:
+        resolved_type = default_type
+
+    ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    note = build_note(
+        ts=ts, event_type=resolved_type, summary=summary,
+        request=request, files=files, diff_stat=diff_stat,
+    )
+    source = RawSource(
+        content_hash=content_hash(note),
+        source_type=SourceType.DEV_EVENT,
+        title=f"Dev event {ts} — {resolved_type}",
+        text=note,
+        fetched_at=now,
+        provenance={
+            "type": resolved_type,
+            "files": ",".join(files),
+            "ts": ts,
+            "origin": origin,
+            "label": cfg.capture.topic_label,
+        },
+    )
+    source_id, _created = await repo.ingest_raw_source(source)
+    try:
+        await index_owner_fts(repo, owner_type="raw_source", owner_id=source_id, text=note)
+    except Exception:
+        pass
+    await ActivityRecorder(repo).record(
+        "capture",
+        {"type": resolved_type, "files": ",".join(files)},
+        summary=f"dev event ({resolved_type})",
+    )
+    return await repo.get_raw_source_by_hash(source.content_hash)
