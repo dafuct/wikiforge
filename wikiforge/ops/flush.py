@@ -137,5 +137,5 @@ async def flush_dev_events(
             digested += applied
             if applied == 0:
                 break
-    pending_left = len(await repo.dev_events_pending_digest(limit=batch_size))
+    pending_left = await repo.count_dev_events_pending_digest()
     return FlushStats(embedded_chunks=embedded, digested_events=digested, pending_left=pending_left)

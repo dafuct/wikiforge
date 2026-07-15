@@ -54,9 +54,9 @@ async def _wiki(tmp_path: Path):
     return db, Repository(db), cfg
 
 
-async def _pending_event(repo, cfg) -> int:
+async def _pending_event(repo, cfg, request: str = _LONG) -> int:
     src = await capture_event(
-        repo, request=_LONG, files=["a.py"], event_type=None, default_type="change",
+        repo, request=request, files=["a.py"], event_type=None, default_type="change",
         origin="hook", cfg=cfg, llm=None, now=_NOW, git_runner=lambda argv: "",
     )
     assert src is not None and src.provenance["digest"] == "pending"
@@ -102,13 +102,24 @@ async def test_flush_salvages_partial_batch(tmp_path: Path) -> None:
     db, repo, cfg = await _wiki(tmp_path)
     try:
         sid = await _pending_event(repo, cfg)
+        # A second, distinct pending event: the LLM will return an off-vocabulary
+        # ``type`` for it, so the ``type not in EVENT_TYPES`` guard — not the
+        # unknown-id path — is what has to reject it.
+        bad_sid = await _pending_event(repo, cfg, request=_LONG + " extra distinct text")
         llm = _BatchLLM(BatchDigestOut(items=[
             BatchDigestItem(id=sid, summary="Good.", type="refactor"),
-            BatchDigestItem(id=999999, summary="Ghost.", type="feature"),   # unknown id ignored
-            BatchDigestItem(id=sid, summary="Bad type.", type="nonsense"),  # invalid type ignored
+            BatchDigestItem(id=999999, summary="Ghost.", type="feature"),  # unknown id ignored
+            BatchDigestItem(id=bad_sid, summary="Bad type.", type="nonsense"),  # invalid type
         ]))
         stats = await flush_dev_events(repo, DimEmbedder(), llm, cfg, digests=True)
         assert stats.digested_events == 1
-        assert stats.pending_left == 0
+        assert stats.pending_left == 1
+
+        applied = await repo.get_raw_source_by_hash(
+            (await repo.dev_events_pending_digest(limit=10))[0].content_hash
+        )
+        assert applied is not None
+        assert applied.provenance["digest"] == "pending"
+        assert applied.id == bad_sid
     finally:
         await db.close()
