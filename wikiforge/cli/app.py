@@ -201,13 +201,26 @@ def query(
     question: str = typer.Argument(..., help="The question to ask the wiki."),
     home: str | None = HomeOption,
     depth: str = DepthOption,
+    scope: str = typer.Option(
+        "all", "--scope", help="What to search: all | articles | devlog."
+    ),
+    extract: bool = typer.Option(
+        False,
+        "--extract",
+        help="Print matching excerpts with no LLM call (the caller synthesizes).",
+    ),
 ) -> None:
-    """Answer a question from the wiki's compiled knowledge, citing sources."""
-    from wikiforge.services import run_query
+    """Answer a question from the wiki's knowledge (articles + raw sources + dev log)."""
+    from wikiforge.query.service import NO_RESULTS_ANSWER, render_excerpts
+    from wikiforge.services import run_extract, run_query
 
     target_home = resolve_home(home)
     try:
-        result = asyncio.run(run_query(target_home, question, depth=depth))
+        if extract:
+            targets = asyncio.run(run_extract(target_home, question, depth=depth, scope=scope))
+            typer.echo(render_excerpts(targets) if targets else NO_RESULTS_ANSWER)
+            return
+        result = asyncio.run(run_query(target_home, question, depth=depth, scope=scope))
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from None
