@@ -71,7 +71,10 @@ public class SpendActivityRepository {
                            ts, args_redacted
                     FROM activity_log
                 )
-                ORDER BY ts DESC LIMIT :limit OFFSET :offset
+                -- kind/ref_id break ts ties: both source tables store second-granularity
+                -- timestamps, so a merged tie is plausible, and LIMIT/OFFSET over a
+                -- non-total order can duplicate or skip rows across pages.
+                ORDER BY ts DESC, kind DESC, ref_id DESC LIMIT :limit OFFSET :offset
                 """)
                 .param("limit", size)
                 .param("offset", page * size)
