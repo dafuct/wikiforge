@@ -34,15 +34,24 @@ class HybridRetriever:
         self._reranker = reranker
 
     async def retrieve(
-        self, query: str, *, depth: str = "standard", include_archived: bool = False
+        self,
+        query: str,
+        *,
+        depth: str = "standard",
+        include_archived: bool = False,
+        owner_types: list[str] | None = None,
     ) -> list[ChunkTarget]:
         """Return the top-K chunks for a query, fused from FTS + vector search.
 
-        ``quick``/``standard`` search article chunks; ``deep`` also searches raw
-        sources and reranks with the injected cross-encoder. Archived topics are
-        excluded unless ``include_archived``.
+        ``owner_types`` decides what is searched (``None`` keeps the depth-derived
+        default: ``deep`` adds raw sources). ``deep`` additionally reranks with the
+        injected cross-encoder. Archived topics are excluded unless
+        ``include_archived``.
         """
-        owner_types = ["article", "raw_source"] if depth == QueryDepth.DEEP else ["article"]
+        if owner_types is None:
+            owner_types = (
+                ["article", "raw_source"] if depth == QueryDepth.DEEP else ["article"]
+            )
         top_k = self._config.retrieval.top_k
         candidate_limit = top_k * _CANDIDATE_MULTIPLIER
 
