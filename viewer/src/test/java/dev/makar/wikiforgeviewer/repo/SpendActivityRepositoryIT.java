@@ -1,6 +1,7 @@
 package dev.makar.wikiforgeviewer.repo;
 
 import dev.makar.wikiforgeviewer.dto.ActivityRow;
+import dev.makar.wikiforgeviewer.dto.DevlogEntry;
 import dev.makar.wikiforgeviewer.dto.PageResponse;
 import dev.makar.wikiforgeviewer.dto.SpendRow;
 import dev.makar.wikiforgeviewer.error.InvalidSearchQueryException;
@@ -71,5 +72,22 @@ class SpendActivityRepositoryIT {
 
         assertThat(page.total()).isEqualTo(2);
         assertThat(page.items().get(0).command()).isEqualTo("compile");
+    }
+
+    @Test
+    void should_mergeDevEventsAndActivityNewestFirst_when_devlog() {
+        PageResponse<DevlogEntry> feed = repository.devlog(client, 0, 10);
+
+        assertThat(feed.total()).isEqualTo(3); // 1 dev_event + 2 activity rows
+        assertThat(feed.items().get(0).kind()).isEqualTo("dev_event"); // 2026-07-02 newest
+        assertThat(feed.items().get(0).title()).isEqualTo("commit: add recall hook");
+        assertThat(feed.items().get(1).kind()).isEqualTo("activity");
+    }
+
+    @Test
+    void should_pageDevlog_when_sizeSmallerThanTotal() {
+        PageResponse<DevlogEntry> feed = repository.devlog(client, 1, 2);
+
+        assertThat(feed.items()).hasSize(1);
     }
 }
