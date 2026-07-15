@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from wikiforge.config.settings import load_config, write_default_config
-from wikiforge.models.domain import Article, Topic
-from wikiforge.models.enums import TopicStatus
+from wikiforge.models.domain import Article, RawSource, Topic
+from wikiforge.models.enums import SourceType, TopicStatus
 from wikiforge.search.retriever import HybridRetriever
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
@@ -117,3 +117,39 @@ async def test_deep_applies_reranker(env) -> None:
     hits = await r.retrieve("async rust", depth="deep")
     assert seen.get("called") is True
     assert hits  # rerank produced an ordering
+
+
+async def _dev_event_chunk(repo, emb, text: str) -> int:
+    from datetime import UTC, datetime
+
+    from wikiforge.search.index import index_owner
+
+    src = RawSource(
+        content_hash=f"h-{text[:16]}", source_type=SourceType.DEV_EVENT,
+        title="Dev event", text=text, fetched_at=datetime(2026, 7, 15, tzinfo=UTC),
+        provenance={},
+    )
+    sid, _ = await repo.ingest_raw_source(src)
+    await index_owner(repo, emb, owner_type="raw_source", owner_id=sid, text=text)
+    return sid
+
+
+async def test_owner_types_override_surfaces_devlog_at_standard_depth(env) -> None:
+    cfg, repo, emb = env
+    await _dev_event_chunk(repo, emb, "dev event about rust async deadlock")
+    r = HybridRetriever(repo, emb, cfg)
+    default_hits = await r.retrieve("async rust", depth="standard")
+    assert all(h.owner_type == "article" for h in default_hits)  # unchanged default
+    all_hits = await r.retrieve(
+        "async rust", depth="standard", owner_types=["article", "raw_source"]
+    )
+    assert any(h.owner_type == "raw_source" for h in all_hits)
+
+
+async def test_owner_types_devlog_only(env) -> None:
+    cfg, repo, emb = env
+    await _article_chunk(repo, emb, "rust-async", "# Rust Async\n\nRust async is cooperative.")
+    await _dev_event_chunk(repo, emb, "dev event about rust async deadlock")
+    r = HybridRetriever(repo, emb, cfg)
+    hits = await r.retrieve("async rust", depth="standard", owner_types=["raw_source"])
+    assert hits and all(h.owner_type == "raw_source" for h in hits)
