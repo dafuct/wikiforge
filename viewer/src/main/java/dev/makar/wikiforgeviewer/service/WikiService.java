@@ -34,7 +34,7 @@ public class WikiService {
             try {
                 out.add(summaries.summarize(registry.clientFor(d.id()), d));
             } catch (RuntimeException e) {
-                log.warn("wiki {} unreadable, listing with empty stats: {}", d.id(), e.getMessage());
+                log.warn("wiki {} unreadable, listing with empty stats: {}", d.id(), e.getMessage(), e);
                 out.add(new WikiSummary(d.id(), d.name(), d.path(), d.kind(), 0, null, 0.0));
             }
         }
