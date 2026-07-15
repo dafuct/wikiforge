@@ -6,7 +6,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
 @Tag("integration")
-class WikiforgeViewerApplicationTest {
+class WikiforgeViewerApplicationIT {
 
     @Test
     void should_loadContext_when_applicationStarts() {
