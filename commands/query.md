@@ -19,5 +19,5 @@ the ids you relied on (e.g. `[article:12#0]`). If the output says no matches wer
 found, say the wiki has nothing on this yet and suggest `/wikiforge:research` +
 `/wikiforge:compile`.
 
-If it errors: a config error → check `[llm] backend`; `wiki: command not found` →
+If it errors: a config error → verify embedding setup (e.g., `VOYAGE_API_KEY` if using Voyage); `wiki: command not found` →
 the plugin setup may still be installing — ask me to reopen the session.
