@@ -44,6 +44,7 @@ async def _wiki(tmp_path: Path) -> tuple[Database, Repository, object]:
 
 async def test_capture_change_event_indexes_and_records(tmp_path: Path) -> None:
     db, repo, cfg = await _wiki(tmp_path)
+    cfg.capture.summarize = "sync"
     try:
         src = await capture_event(
             repo, request="fix retriever token AKIAIOSFODNN7EXAMPLE", files=["a.py"],
@@ -70,6 +71,7 @@ async def test_capture_change_event_indexes_and_records(tmp_path: Path) -> None:
 
 async def test_explicit_type_overrides_model(tmp_path: Path) -> None:
     db, repo, cfg = await _wiki(tmp_path)
+    cfg.capture.summarize = "sync"
     try:
         src = await capture_event(
             repo, request="x", files=["a.py"], event_type="feature", default_type="change",
@@ -86,6 +88,7 @@ async def test_explicit_type_overrides_model(tmp_path: Path) -> None:
 
 async def test_llm_failure_falls_back(tmp_path: Path) -> None:
     db, repo, cfg = await _wiki(tmp_path)
+    cfg.capture.summarize = "sync"
     try:
         src = await capture_event(
             repo, request="x", files=["a.py"], event_type=None, default_type="change",
@@ -122,7 +125,7 @@ async def test_capture_persists_when_indexing_fails(tmp_path: Path, monkeypatch)
 
 async def test_summarize_disabled(tmp_path: Path) -> None:
     db, repo, cfg = await _wiki(tmp_path)
-    cfg.capture.summarize = False
+    cfg.capture.summarize = "off"
     try:
         src = await capture_event(
             repo, request="x", files=[], event_type=None, default_type="research",
@@ -132,6 +135,67 @@ async def test_summarize_disabled(tmp_path: Path) -> None:
         assert src is not None
         assert src.title.endswith("— research")
         assert "## Summary" not in src.text
+    finally:
+        await db.close()
+
+
+class _ExplodingLLM:
+    """Any call proves the zero-LLM contract was violated."""
+
+    async def parse(self, *a, **k):
+        raise AssertionError("deferred mode must not call the LLM")
+
+    async def complete(self, *a, **k):
+        raise AssertionError("deferred mode must not call the LLM")
+
+
+async def test_deferred_short_request_is_its_own_summary(tmp_path: Path) -> None:
+    db, repo, cfg = await _wiki(tmp_path)
+    assert cfg.capture.summarize == "deferred"  # template default
+    try:
+        src = await capture_event(
+            repo, request="fix the retriever crash", files=["a.py"], event_type=None,
+            default_type="change", origin="hook", cfg=cfg, llm=_ExplodingLLM(),
+            now=_NOW, git_runner=lambda argv: "",
+        )
+        assert src is not None
+        assert src.title.endswith("— bugfix")          # heuristic type
+        assert "## Summary" not in src.text             # request IS the summary
+        assert src.provenance.get("digest") is None     # nothing pending
+    finally:
+        await db.close()
+
+
+async def test_deferred_long_request_marks_digest_pending(tmp_path: Path) -> None:
+    db, repo, cfg = await _wiki(tmp_path)
+    try:
+        long_request = "please investigate and then rework " + "x" * 300
+        src = await capture_event(
+            repo, request=long_request, files=["a.py"], event_type=None,
+            default_type="change", origin="hook", cfg=cfg, llm=_ExplodingLLM(),
+            now=_NOW, git_runner=lambda argv: "",
+        )
+        assert src is not None
+        assert src.provenance["digest"] == "pending"
+        assert "## Summary" not in src.text
+        assert long_request[:50] in src.text            # raw text fully stored
+    finally:
+        await db.close()
+
+
+async def test_sync_mode_still_calls_llm(tmp_path: Path) -> None:
+    db, repo, cfg = await _wiki(tmp_path)
+    cfg.capture.summarize = "sync"
+    try:
+        src = await capture_event(
+            repo, request="do a thing", files=["a.py"], event_type=None,
+            default_type="change", origin="hook", cfg=cfg,
+            llm=_FakeLLM(DevEventDigest(summary="Did the thing.", type="feature")),
+            now=_NOW, git_runner=lambda argv: "",
+        )
+        assert src is not None
+        assert "Did the thing." in src.text
+        assert src.title.endswith("— feature")
     finally:
         await db.close()
 
