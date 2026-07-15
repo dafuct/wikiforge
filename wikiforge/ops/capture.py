@@ -285,9 +285,11 @@ async def capture_event(
         request = redact_secrets(request)
     diff_stat = git_diff_stat(files, runner=git_runner, max_lines=cfg.capture.max_diff_lines)
 
+    mode = cfg.capture.summarize
     summary = ""
+    digest_pending = False
     resolved_type = event_type
-    if cfg.capture.summarize and llm is not None and (request or diff_stat):
+    if mode == "sync" and llm is not None and (request or diff_stat):
         try:
             digest = await summarize_event(llm, request=request, diff=diff_stat)
             summary = digest.summary
@@ -295,8 +297,10 @@ async def capture_event(
                 resolved_type = digest.type
         except Exception:
             pass
+    elif mode == "deferred" and request and len(request) > cfg.capture.summarize_min_chars:
+        digest_pending = True
     if resolved_type is None:
-        resolved_type = default_type
+        resolved_type = infer_event_type(request, files) or default_type
 
     ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     note = build_note(
@@ -315,6 +319,7 @@ async def capture_event(
             "ts": ts,
             "origin": origin,
             "label": cfg.capture.topic_label,
+            **({"digest": "pending"} if digest_pending else {}),
         },
     )
     source_id, _created = await repo.ingest_raw_source(source)
