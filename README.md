@@ -6,10 +6,13 @@
 
 A local-first, tool-agnostic **personal knowledge base compiler**. wikiforge researches topics with parallel LLM agents, compiles the gathered evidence into cited, confidence-scored Markdown articles, and answers questions over that knowledge with hybrid retrieval — all backed by a single local SQLite file you own.
 
+It also doubles as **memory for your coding agent**: it records why your code changed, and feeds the relevant history back into your next Claude Code prompt — [without spending a single token](#agent-memory-that-costs-no-tokens).
+
 - **Local-first** — one SQLite database (WAL, FTS5 full-text + `sqlite-vec` vectors). No server, no cloud state. Your `~/wiki` is the whole system of record.
 - **Provenance everywhere** — every finding, citation, and conflict traces back to an immutable raw source and the research session that produced it.
 - **Two thin surfaces, one core** — a `rich` Typer CLI and a `fastmcp` MCP server are both thin wrappers over one shared service layer. Nothing is implemented twice.
-- **Injection-aware** — all ingested/fetched text is treated as untrusted data: wrapped in `<source_data>` tags and sealed against delimiter breakout before it ever reaches a model.
+- **Injection-aware** — all ingested/fetched text is treated as untrusted data: wrapped in `<source_data>` tags and sealed against delimiter breakout before it ever reaches a model — on the way *out* to an agent's context, too.
+- **Zero-token by default** — capturing your dev history, reading the wiki back, and injecting it into an agent all run on local embeddings and cost **no LLM calls**. You only spend tokens when you explicitly ask to research, compile, or summarize.
 
 ---
 
@@ -22,7 +25,7 @@ The repository doubles as a [Claude Code](https://claude.com/claude-code) plugin
 /plugin install wikiforge@wikiforge
 ```
 
-At install you choose the LLM backend (`subscription` or `api`); the first session bootstraps the bundled `wiki` CLI via `uv` (a few minutes on first run). Then:
+At install you choose the LLM backend (`subscription` or `api`); the first session bootstraps the bundled `wiki` CLI via `uv` (a few minutes on first run, including a one-off local embedding-model download). Later sessions re-install it automatically whenever the plugin's source is newer than the installed binary, so pulling an update is enough — no manual reinstall. Then:
 
 ```text
 /wikiforge:init             # create a knowledge base for this project
@@ -41,7 +44,8 @@ The rest of this README covers running wikiforge **from source** as a standalone
 
 - **Python 3.13+**
 - [**uv**](https://docs.astral.sh/uv/) for dependency management
-- An **Anthropic API key**. A **Voyage AI key** is optional (for hosted embeddings; the default runs a local embedding model with no key).
+- **One LLM backend**: either an **Anthropic API key** (`[llm] backend = "api"`) or a logged-in `claude` CLI (`backend = "subscription"` — no API credits). See [Choosing an LLM backend](#choosing-an-llm-backend).
+- A **Voyage AI key** is optional (hosted embeddings; the default runs a local embedding model with no key). Capture, recall, and `--extract` need **no** LLM backend at all — only the embedder.
 
 ## Install
 
@@ -56,10 +60,12 @@ This installs everything, including a local embedding model (`sentence-transform
 Secrets are **never** stored in the config file — they are read from the environment:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...      # required
+export ANTHROPIC_API_KEY=sk-ant-...      # required for [llm] backend = "api" only
 export VOYAGE_API_KEY=pa-...             # optional — enables hosted embeddings
 export WIKIFORGE_HOME=~/wiki             # optional — default wiki location (else ~/wiki)
 ```
+
+With `backend = "subscription"` no key is needed — wikiforge shells out to your logged-in `claude` CLI instead.
 
 ## First run
 
@@ -109,13 +115,24 @@ ingest / research  →  raw_sources (immutable)  →  chunks (FTS5 + vector inde
 
 ---
 
-## Capturing your development cycle
+## Agent memory that costs no tokens
 
-wikiforge can remember *why* your code got to be the way it is. When a Claude Code
-task edits files, a `Stop` hook records a **dev event** — your request (the why), the
-changed files + `git diff --stat` (the what), an inferred type (feature/bugfix/research/…),
-and the time. It captures **uncommitted** work, so you never have to commit for the
-wiki to remember.
+wikiforge remembers *why* your code got to be the way it is — and hands that memory back to
+your coding agent automatically. Installed as a Claude Code plugin, the whole loop runs on
+local embeddings and makes **zero LLM calls**:
+
+| When | What happens | LLM cost |
+|---|---|---|
+| A task edits files | `Stop` hook records a **dev event**: your request (the why), changed files + `git diff --stat` (the what), an inferred type, the time | **none** |
+| Session starts | dev-log vectors are backfilled; a stale `wiki` CLI reinstalls itself | **none** |
+| You type a prompt | `UserPromptSubmit` hook injects the most relevant wiki + dev-log excerpts into the agent's context, so it skips re-exploring what's already known | **none** |
+| The agent asks the wiki | MCP `search_knowledge` returns cited excerpts for the agent to synthesize in its own (already-paid-for) context | **none** |
+| You run `research` / `compile` / `--digests` | the only paths that spend tokens — always explicit | you choose |
+
+That last column is the whole design: on a Claude subscription every LLM call carries ~22K
+tokens of Claude Code harness overhead, so the cheapest call is the one never made.
+
+It captures **uncommitted** work, so you never have to commit for the wiki to remember.
 
 - **Automatic:** fires when a task changed files. No action needed.
 - **Research notes:** for investigations that changed no files, run `/wikiforge:wiki-note "what you
@@ -167,9 +184,12 @@ wiki to remember.
 | `wiki dataset add <name> <path>` | Track an on-disk dataset (name, path, size). |
 | `wiki archive <topic>` | Archive a topic (excluded from default query/retrieval). |
 | `wiki feedback <target> <approve\|reject\|correct> [note]` | Record a verdict against an article (`article:<id>`) or finding (`finding:<id>`). |
+| `wiki capture` | Record a dev event. `--hook` (reads Claude Code `Stop` JSON on stdin), `--note "<text>"` + `--type`, or `--flush` to backfill dev-log vectors (free) with optional `--digests` to batch-summarize. |
+| `wiki recall --hook` | Read a Claude Code `UserPromptSubmit` payload on stdin and print relevant wiki excerpts for the agent's context. Zero LLM. Always exits 0. |
 | `wiki stats` | Wiki size + LLM spend. `--since <YYYY-MM-DD>` adds a spend window. |
 | `wiki context` | Print a recent-activity digest for pasting into an agent's context. |
 | `wiki serve-mcp` | Serve the wiki over MCP (stdio transport). |
+| `wiki version` | Print the installed wikiforge version. |
 
 ---
 
@@ -307,7 +327,8 @@ These are deliberate scoping decisions, not oversights:
 - **Injection defense is uniform.** Every place untrusted or model-generated text is wrapped in `<source_data>` seals the delimiter first (shared `seal_source_data`), so a crafted source can't break out of the data envelope.
 - **`wiki research` shows a live agent table; `wiki thesis` does not** (thesis runs to completion and prints its verdict).
 - **The static-site export renders article Markdown as escaped, pre-wrapped text** — there is no Markdown→HTML dependency, so bodies are shown verbatim (and safely escaped) rather than rendered.
-- **The JSON export currently dumps topics, articles, conflicts, and the topic graph.** Citation and inventory/dataset records are not yet included in the dump.
+- **Dev events are never compiled into articles.** They stay raw, searchable sources — the dev log is history, not synthesized knowledge.
+- **The recall similarity gate is tuned for the default `bge-small` embedder.** Its 0.6 threshold was calibrated by measurement (unrelated prompts peak ~0.50, relevant ones 0.72+). If you switch embedding models, re-measure it — these models have a high similarity floor, and a threshold below it makes recall inject noise into every prompt.
 
 ### Deferred toggles (not built)
 
