@@ -1,8 +1,10 @@
 package dev.makar.wikiforgeviewer.service;
 
+import dev.makar.wikiforgeviewer.dto.WikiStats;
 import dev.makar.wikiforgeviewer.dto.WikiSummary;
 import dev.makar.wikiforgeviewer.registry.WikiDescriptor;
 import dev.makar.wikiforgeviewer.registry.WikiRegistry;
+import dev.makar.wikiforgeviewer.repo.StatsRepository;
 import dev.makar.wikiforgeviewer.repo.WikiSummaryRepository;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,10 +19,13 @@ public class WikiService {
 
     private final WikiRegistry registry;
     private final WikiSummaryRepository summaries;
+    private final StatsRepository statsRepository;
 
-    public WikiService(WikiRegistry registry, WikiSummaryRepository summaries) {
+    public WikiService(WikiRegistry registry, WikiSummaryRepository summaries,
+                       StatsRepository statsRepository) {
         this.registry = registry;
         this.summaries = summaries;
+        this.statsRepository = statsRepository;
     }
 
     public List<WikiSummary> listWikis() {
@@ -39,5 +44,9 @@ public class WikiService {
     public List<WikiSummary> rescan() {
         registry.rescan();
         return listWikis();
+    }
+
+    public WikiStats stats(String wikiId) {
+        return statsRepository.stats(registry.clientFor(wikiId));
     }
 }
