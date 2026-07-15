@@ -108,3 +108,29 @@ def test_cli_query_on_empty_wiki_returns_no_information(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "no" in result.stdout.lower()
     assert "information" in result.stdout.lower() or "found" in result.stdout.lower()
+
+
+def test_query_extract_flag_prints_sealed_excerpts(monkeypatch, tmp_path: Path) -> None:
+    from wikiforge.search.rrf import ChunkTarget
+
+    async def fake_run_extract(home, question, *, depth, scope):
+        assert scope == "all"
+        return [
+            ChunkTarget(
+                rowid=1,
+                owner_type="raw_source",
+                owner_id=7,
+                seq=0,
+                text="deadlock decision",
+                topic_id=None,
+                topic_status=None,
+            )
+        ]
+
+    import wikiforge.services as services
+
+    monkeypatch.setattr(services, "run_extract", fake_run_extract)
+    result = CliRunner().invoke(app, ["query", "deadlock", "--extract", "--home", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "raw_source:7#0" in result.output
+    assert "deadlock decision" in result.output

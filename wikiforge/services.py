@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -15,6 +16,7 @@ from wikiforge.activity.recorder import ActivityRecorder
 from wikiforge.activity.stats import StatsService, WikiStats
 from wikiforge.config.settings import (
     CONFIG_FILENAME,
+    Config,
     load_config,
     write_default_config,
 )
@@ -38,8 +40,12 @@ from wikiforge.output.generator import OutputGenerator
 from wikiforge.query.service import QueryResult
 from wikiforge.research.progress import ResearchReporter
 from wikiforge.search.index import index_owner
+from wikiforge.search.rrf import ChunkTarget
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
+
+if TYPE_CHECKING:
+    from wikiforge.search.retriever import Reranker
 
 
 async def init_wiki(name: str, home: Path) -> Path:
@@ -313,7 +319,22 @@ async def run_related(home: Path, topic_text: str) -> list[tuple[Topic, float]]:
         await db.close()
 
 
-async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
+def _reranker_for(cfg: Config, depth: str) -> Reranker | None:
+    """Lazily build the deep-depth cross-encoder reranker; ``None`` otherwise."""
+    if depth != QueryDepth.DEEP:
+        return None
+    from sentence_transformers import CrossEncoder
+
+    cross_encoder = CrossEncoder(cfg.retrieval.rerank_model)
+
+    def _rerank(q: str, docs: list[str]) -> list[float]:
+        scores = cross_encoder.predict([(q, doc) for doc in docs])
+        return [float(s) for s in scores]
+
+    return _rerank
+
+
+async def run_query(home: Path, query: str, *, depth: str, scope: str = "all") -> QueryResult:
     """Answer a question against the wiki, citing the retrieved chunks it relied on.
 
     Assembles the factory-selected LLM provider, the factory-selected embedding provider,
@@ -326,7 +347,7 @@ async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
     from wikiforge.embed.factory import build_embedding_provider
     from wikiforge.llm.factory import build_llm_provider
     from wikiforge.query.service import answer_query
-    from wikiforge.search.retriever import HybridRetriever, Reranker
+    from wikiforge.search.retriever import HybridRetriever
 
     cfg = load_config(home)
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
@@ -335,21 +356,33 @@ async def run_query(home: Path, query: str, *, depth: str) -> QueryResult:
         tracker = CostTracker(repo, cfg)
         llm = build_llm_provider(cfg, tracker)
         embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
+        retriever = HybridRetriever(repo, embedder, cfg, reranker=_reranker_for(cfg, depth))
+        return await answer_query(llm, retriever, query, depth=depth, scope=scope)
+    finally:
+        await db.close()
 
-        reranker: Reranker | None = None
-        if depth == QueryDepth.DEEP:
-            from sentence_transformers import CrossEncoder
 
-            cross_encoder = CrossEncoder(cfg.retrieval.rerank_model)
+async def run_extract(
+    home: Path, query: str, *, depth: str, scope: str = "all"
+) -> list[ChunkTarget]:
+    """Retrieve cited excerpts with NO LLM provider constructed (zero-LLM read path).
 
-            def _rerank(q: str, docs: list[str]) -> list[float]:
-                scores = cross_encoder.predict([(q, doc) for doc in docs])
-                return [float(s) for s in scores]
+    Builds only the embedder + retriever — never :func:`~wikiforge.llm.factory.build_llm_provider`
+    — then delegates to :func:`~wikiforge.query.service.extract_query`. Intended for a
+    calling agent whose context is already paid for, so it can synthesize the answer
+    itself instead of paying for a second LLM round trip.
+    """
+    from wikiforge.embed.factory import build_embedding_provider
+    from wikiforge.query.service import extract_query
+    from wikiforge.search.retriever import HybridRetriever
 
-            reranker = _rerank
-
-        retriever = HybridRetriever(repo, embedder, cfg, reranker=reranker)
-        return await answer_query(llm, retriever, query, depth=depth)
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        embedder = build_embedding_provider(cfg, repo)
+        retriever = HybridRetriever(repo, embedder, cfg, reranker=_reranker_for(cfg, depth))
+        return await extract_query(retriever, query, depth=depth, scope=scope)
     finally:
         await db.close()
 

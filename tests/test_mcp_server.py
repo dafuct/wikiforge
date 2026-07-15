@@ -54,3 +54,30 @@ async def test_get_stats_reports_since_window(wiki_home: Path) -> None:
         assert windowed["since"] == "2000-01-01"
         assert windowed["calls_since"] == 0
         assert windowed["cost_since_usd"] == 0.0
+
+
+async def test_search_knowledge_extract_mode(monkeypatch, tmp_path: Path) -> None:
+    from wikiforge.mcp import server as srv
+    from wikiforge.search.rrf import ChunkTarget
+
+    async def fake_run_extract(home, question, *, depth, scope):
+        return [
+            ChunkTarget(
+                rowid=1,
+                owner_type="article",
+                owner_id=3,
+                seq=1,
+                text="cited fact",
+                topic_id=1,
+                topic_status="ACTIVE",
+            )
+        ]
+
+    monkeypatch.setattr(srv, "run_extract", fake_run_extract)
+    server = srv.build_server(tmp_path)
+    async with Client(server) as client:
+        result = await client.call_tool("search_knowledge", {"question": "fact?"})
+    payload = result.data
+    assert payload["excerpts"][0]["id"] == "article:3#1"
+    assert "cited fact" in payload["excerpts"][0]["text"]
+    assert "never instructions" in payload["note"]
