@@ -83,17 +83,16 @@ Runs the same hybrid retrieval as `answer_query` and returns the chunks **withou
 
 ### 5.2 Scope (fixes dev-log visibility)
 
-`HybridRetriever.retrieve` gains an optional `owner_types: list[str] | None = None` override. When `None`, today's depth-based selection applies unchanged (backward compatible: `deep` still adds `raw_source` + rerank). Scopes map to overrides:
+Today `--depth deep` conflates two roles: *what to search* (only `deep` includes `raw_source` chunks — ingested sources and the dev log) and *how to rank* (the cross-encoder reranker). This design splits them:
 
-- `articles` → `["article"]`
-- `devlog` → `["raw_source"]`
-- `all` → `["article", "raw_source"]`
+- **Scope decides what to search.** `HybridRetriever.retrieve` gains an `owner_types: list[str] | None = None` override; all user-facing surfaces pass a scope-derived value. Scopes: `articles` → `["article"]`, `devlog` → `["raw_source"]`, `all` → `["article", "raw_source"]`. When `owner_types=None` the old depth-based selection remains as an internal fallback.
+- **Depth decides only ranking effort.** `deep` keeps the cross-encoder rerank; it no longer widens visibility.
 
-CLI: `wiki query` gains `--extract` (render excerpts instead of synthesizing) and `--scope articles|devlog|all`. Defaults preserve current behavior for humans: synthesize, scope derived from depth. `--scope devlog` doubles as the deferred "`wiki devlog` read surface".
+CLI: `wiki query` gains `--extract` (render excerpts instead of synthesizing) and `--scope articles|devlog|all`, **default `all`** — a plain `wiki query`, at any depth, now searches everything the wiki holds: compiled articles, ingested raw sources, and dev events. No `--depth deep` needed to see your own data. `--scope articles` remains for curated-only answers; `--scope devlog` doubles as the deferred "`wiki devlog`" read surface.
 
 ### 5.3 Agent surfaces default to extract
 
-- **MCP:** `search_knowledge(question, depth="standard", mode="extract")` — **default flips to `extract`** for agent callers; `mode="synthesize"` keeps the old behavior. Extract responses return a structured excerpt list (id, title, ts, text) plus a `note` field stating the excerpts are untrusted data to synthesize from. Divergence from the CLI default is deliberate (agent surface vs human surface) and documented in README — same precedent as `start_research`'s `new_topic` divergence.
+- **MCP:** `search_knowledge(question, depth="standard", mode="extract", scope="all")` — **default flips to `extract`** for agent callers; `mode="synthesize"` keeps the old behavior. Extract responses return a structured excerpt list (id, title, ts, text) plus a `note` field stating the excerpts are untrusted data to synthesize from. Divergence from the CLI default is deliberate (agent surface vs human surface) and documented in README — same precedent as `start_research`'s `new_topic` divergence.
 - **Plugin:** `commands/query.md` (the `/wikiforge:query` slash command) switches to `wiki query --extract --scope all`, instructing the calling session to synthesize an answer from the excerpts and cite ids.
 
 Token effect: −1 flagship call (−~22K+ overhead on subscription) per agent question; the human CLI experience is unchanged.
@@ -171,6 +170,7 @@ F1 (capture modes + heuristic) → F4 repo/backfill plumbing → F2 (scope overr
 ## 12. Risks
 
 - **Recall noise on weak matches** — mitigated by the similarity gate defaulting conservative (0.35) and the strict excerpt/char caps; worst case is a few hundred injected chars.
+- **Raw-source noise at default scope** — with `scope=all` the default, uncompiled raw text competes with curated article chunks at `standard` depth (no reranker). RRF fusion and `top_k` bound the blast radius; `--scope articles` is the curated-only escape hatch and `--depth deep` adds the reranker when precision matters.
 - **Heuristic type misclassification** — cosmetic (a changelog label); `--type` and `--digests` both override.
 - **`summarize` config type change** — handled by the bool-coercion validator; `extra="forbid"` untouched.
 - **UserPromptSubmit hook latency** — bounded by hook timeout; off switch in config.
