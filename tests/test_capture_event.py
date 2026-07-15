@@ -5,9 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from wikiforge.config.settings import load_config, write_default_config
 from wikiforge.llm.provider import ParsedResult
-from wikiforge.ops.capture import DevEventDigest, capture_event
+from wikiforge.ops.capture import DevEventDigest, capture_event, infer_event_type
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
 
@@ -132,3 +134,25 @@ async def test_summarize_disabled(tmp_path: Path) -> None:
         assert "## Summary" not in src.text
     finally:
         await db.close()
+
+
+@pytest.mark.parametrize(
+    ("request_text", "files", "expected"),
+    [
+        ("fix the retriever crash", ["a.py"], "bugfix"),
+        ("виправ баг у ретривері", ["a.py"], "bugfix"),
+        ("update the README badges", [], "docs"),
+        ("додай документацію", [], "docs"),
+        ("write the spec for flush", [], "spec"),
+        ("design the recall architecture", [], "design"),
+        ("research why the model times out", [], "research"),
+        ("дослідити чому падає тест", [], "research"),
+        ("refactor the capture module", [], "refactor"),
+        ("bump dependencies and fix lint", [], "bugfix"),  # first matching rule wins
+        ("add retry logic", ["docs/guide.md", "docs/api.md"], "docs"),  # all-.md files
+        ("add retry logic", ["tests/test_retry.py"], "chore"),  # test paths
+        ("add retry logic", ["wikiforge/ops/retry.py"], None),  # no rule matches
+    ],
+)
+def test_infer_event_type(request_text: str, files: list[str], expected: str | None) -> None:
+    assert infer_event_type(request_text, files) == expected
