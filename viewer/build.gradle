@@ -25,6 +25,7 @@ dependencies {
     implementation 'org.xerial:sqlite-jdbc:3.50.3.0'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
 }
 
 tasks.named('test') {
