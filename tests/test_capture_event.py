@@ -152,6 +152,13 @@ async def test_summarize_disabled(tmp_path: Path) -> None:
         ("add retry logic", ["docs/guide.md", "docs/api.md"], "docs"),  # all-.md files
         ("add retry logic", ["tests/test_retry.py"], "chore"),  # test paths
         ("add retry logic", ["wikiforge/ops/retry.py"], None),  # no rule matches
+        # "fixtures" must NOT match bugfix's "fix"; "test" -> chore
+        ("update the test fixtures for the pipeline", ["a.py"], "chore"),
+        # "cite" must NOT match chore's "ci"; "changelog" -> docs
+        ("cite the paper in the changelog", [], "docs"),
+        # "regression" stem still matches bugfix (regress before research)
+        ("investigate the regression", [], "bugfix"),
+        ("document the dependencies", [], "docs"),  # "document" matches doc stem -> docs
     ],
 )
 def test_infer_event_type(request_text: str, files: list[str], expected: str | None) -> None:
