@@ -21,3 +21,9 @@ WHERE source_type = 'dev_event'
   AND json_extract(provenance, '$.digest') = 'pending'
 ORDER BY id
 LIMIT :limit;
+
+-- name: count_dev_events_pending_digest^
+SELECT COUNT(*) AS n
+FROM raw_sources
+WHERE source_type = 'dev_event'
+  AND json_extract(provenance, '$.digest') = 'pending';

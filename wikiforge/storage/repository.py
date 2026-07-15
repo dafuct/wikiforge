@@ -358,6 +358,11 @@ class Repository:
             )
         return out
 
+    async def count_dev_events_pending_digest(self) -> int:
+        """Return the true count of dev-event raw sources with a pending digest."""
+        row = await self._q.count_dev_events_pending_digest(self._db.conn)
+        return int(row["n"]) if row is not None else 0
+
     async def set_raw_source_provenance(
         self, content_hash: str, provenance: dict[str, str]
     ) -> None:

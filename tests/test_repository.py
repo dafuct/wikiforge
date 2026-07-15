@@ -119,6 +119,17 @@ async def test_dev_events_pending_digest_filters_on_provenance(db_repo) -> None:
     assert [e.text for e in events] == ["pending one"]
 
 
+async def test_count_dev_events_pending_digest_exceeds_batch_limit(db_repo) -> None:
+    db, repo = db_repo
+    await _dev_event(repo, "pending one", pending=True)
+    await _dev_event(repo, "pending two", pending=True)
+    await _dev_event(repo, "pending three", pending=True)
+    await _dev_event(repo, "done one", pending=False)
+    # A small batch limit must not cap the reported count.
+    assert await repo.dev_events_pending_digest(limit=2)
+    assert await repo.count_dev_events_pending_digest() == 3
+
+
 async def test_set_raw_source_provenance_updates_only_provenance(db_repo) -> None:
     db, repo = db_repo
     await _dev_event(repo, "pending two", pending=True)
