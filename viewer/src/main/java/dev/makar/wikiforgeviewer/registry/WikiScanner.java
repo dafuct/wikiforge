@@ -1,6 +1,7 @@
 package dev.makar.wikiforgeviewer.registry;
 
 import java.io.IOException;
+import java.nio.file.DirectoryIteratorException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -44,8 +45,9 @@ public final class WikiScanner {
                 }
                 walk(child, depth + 1, maxDepth, found);
             }
-        } catch (IOException ignored) {
-            // unreadable directory: skip silently, discovery is best-effort
+        } catch (IOException | DirectoryIteratorException ignored) {
+            // unreadable directory — at open time (IOException) or mid-iteration
+            // (DirectoryIteratorException, unchecked): skip it, discovery is best-effort
         }
     }
 }
