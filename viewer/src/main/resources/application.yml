@@ -1,0 +1,10 @@
+server:
+  address: 127.0.0.1
+  port: 8080
+
+wikiforge:
+  viewer:
+    scan-roots:
+      - ~/dev
+    scan-depth: 3
+    # global-home: overrides $WIKIFORGE_HOME / ~/wiki when set

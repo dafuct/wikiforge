@@ -20,3 +20,10 @@ _scratch_demo/
 
 # SDD working scratch (task briefs, reports, review diffs)
 .superpowers/
+
+# viewer (Spring Boot + React)
+viewer/build/
+viewer/.gradle/
+viewer/frontend/node_modules/
+viewer/frontend/dist/
+viewer/src/main/resources/static/
