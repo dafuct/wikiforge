@@ -17,7 +17,7 @@
 - **No `spring-boot-starter-jdbc`.** DataSources are built manually by the registry; the starter's auto-configuration would demand a `spring.datasource.url` at startup. Use plain `org.springframework:spring-jdbc` + `com.zaxxer:HikariCP`.
 - **No `@Transactional`.** There is no Spring-managed TransactionManager (multiple dynamic DataSources, single read-only SELECTs). This consciously refines the spec's service-layer line; the rest of the house service rules apply (constructor injection, no servlet types in services, domain exceptions).
 - Spring Boot 4 specifics (verified against 4.0 docs): starter is `spring-boot-starter-webmvc`; `@WebMvcTest` lives at `org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest`; mock beans with `@MockitoBean` from `org.springframework.test.context.bean.override.mockito.MockitoBean` (`@MockBean` is gone).
-- Java: records for all DTOs; constructor injection only; test names `should_doX_when_Y`; AssertJ for assertions; integration tests tagged `@Tag("integration")`; no `Thread.sleep`.
+- Java: records for all DTOs; constructor injection only; test names `should_doX_when_Y`; AssertJ for assertions; integration tests tagged `@Tag("integration")` AND named `{ClassUnderTest}IT` (unit tests keep the `Test` suffix) per the house java-tests rules; no `Thread.sleep`.
 - Timestamps from SQLite are passed through as ISO `TEXT` strings (`String` fields in DTOs) — no parsing, the DB stores `datetime('now')` text.
 - `chunks.owner_type` values are exactly `'article'` and `'raw_source'` (verified in `wikiforge/compile/compiler.py`, `wikiforge/search/retriever.py`).
 - Frontend: TypeScript strict; TanStack Query for all fetching; Tailwind for styling; no component libraries.
@@ -92,7 +92,7 @@ Dependency order: 1 → 2 → 3 → 4 → 5 → 6; tasks 7–14 each depend on 2
 **Files:**
 - Create: `viewer/settings.gradle`, `viewer/build.gradle`, `viewer/gradlew` (+ `viewer/gradle/wrapper/*` via start.spring.io), `viewer/src/main/resources/application.yml`, `viewer/src/main/java/dev/makar/wikiforgeviewer/WikiforgeViewerApplication.java`
 - Modify: `.gitignore`
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/WikiforgeViewerApplicationTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/WikiforgeViewerApplicationIT.java`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -195,7 +195,7 @@ public class WikiforgeViewerApplication {
 }
 ```
 
-Delete any generated `*ApplicationTests.java` and create `viewer/src/test/java/dev/makar/wikiforgeviewer/WikiforgeViewerApplicationTest.java`:
+Delete any generated `*ApplicationTests.java` and create `viewer/src/test/java/dev/makar/wikiforgeviewer/WikiforgeViewerApplicationIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer;
@@ -206,7 +206,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
 @Tag("integration")
-class WikiforgeViewerApplicationTest {
+class WikiforgeViewerApplicationIT {
 
     @Test
     void should_loadContext_when_applicationStarts() {
@@ -246,7 +246,7 @@ git commit -m "feat(viewer): scaffold Spring Boot 4 / Java 25 Gradle project"
 **Files:**
 - Create: `viewer/src/test/resources/schema-test.sql`
 - Create: `viewer/src/test/java/dev/makar/wikiforgeviewer/fixture/WikiDbFixture.java`
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/fixture/WikiDbFixtureTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/fixture/WikiDbFixtureIT.java`
 
 **Interfaces:**
 - Consumes: `wikiforge/storage/schema.sql` (Python source of truth — copy, don't reference at runtime).
@@ -273,7 +273,7 @@ Keep everything else byte-identical — including the `chunks_fts` FTS5 table an
 
 - [ ] **Step 2: Write the failing test**
 
-`viewer/src/test/java/dev/makar/wikiforgeviewer/fixture/WikiDbFixtureTest.java`:
+`viewer/src/test/java/dev/makar/wikiforgeviewer/fixture/WikiDbFixtureIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer.fixture;
@@ -291,7 +291,7 @@ import org.junit.jupiter.api.io.TempDir;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Tag("integration")
-class WikiDbFixtureTest {
+class WikiDbFixtureIT {
 
     @TempDir
     Path tmp;
@@ -479,7 +479,7 @@ git commit -m "test(viewer): wiki.db fixture with trimmed schema copy and standa
 **Files:**
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/config/ViewerProperties.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/registry/WikiScanner.java`
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/registry/WikiScannerTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/registry/WikiScannerIT.java`
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks (pure logic + config binding).
@@ -489,7 +489,7 @@ git commit -m "test(viewer): wiki.db fixture with trimmed schema copy and standa
 
 - [ ] **Step 1: Write the failing test**
 
-`viewer/src/test/java/dev/makar/wikiforgeviewer/registry/WikiScannerTest.java`:
+`viewer/src/test/java/dev/makar/wikiforgeviewer/registry/WikiScannerIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer.registry;
@@ -497,12 +497,14 @@ package dev.makar.wikiforgeviewer.registry;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class WikiScannerTest {
+@Tag("integration")
+class WikiScannerIT {
 
     @TempDir
     Path root;
@@ -556,7 +558,7 @@ class WikiScannerTest {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.registry.WikiScannerTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.registry.WikiScannerIT'`
 Expected: compilation FAILURE — `WikiScanner` does not exist.
 
 - [ ] **Step 3: Implement**
@@ -663,7 +665,7 @@ Register the record: add `@ConfigurationPropertiesScan` to `WikiforgeViewerAppli
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.registry.WikiScannerTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.registry.WikiScannerIT'`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
@@ -683,7 +685,7 @@ git commit -m "feat(viewer): scan roots for project-local wiki.db files; bind vi
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/registry/ReadOnlySqliteDataSources.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/registry/WikiRegistry.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/error/WikiNotFoundException.java`
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/registry/WikiRegistryTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/registry/WikiRegistryIT.java`
 
 **Interfaces:**
 - Consumes: `WikiScanner.scan(List<Path>, int)`, `ViewerProperties` (Task 3), `WikiDbFixture` (Task 2, tests only).
@@ -701,7 +703,7 @@ git commit -m "feat(viewer): scan roots for project-local wiki.db files; bind vi
 
 - [ ] **Step 1: Write the failing test**
 
-`viewer/src/test/java/dev/makar/wikiforgeviewer/registry/WikiRegistryTest.java`:
+`viewer/src/test/java/dev/makar/wikiforgeviewer/registry/WikiRegistryIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer.registry;
@@ -720,7 +722,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Tag("integration")
-class WikiRegistryTest {
+class WikiRegistryIT {
 
     @TempDir
     Path tmp;
@@ -808,7 +810,7 @@ class WikiRegistryTest {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.registry.WikiRegistryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.registry.WikiRegistryIT'`
 Expected: compilation FAILURE — `WikiRegistry`, `WikiDescriptor`, `WikiKind`, `WikiNotFoundException` missing.
 
 - [ ] **Step 3: Implement the four production classes**
@@ -1019,7 +1021,7 @@ public class WikiRegistry {
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.registry.WikiRegistryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.registry.WikiRegistryIT'`
 Expected: PASS (5 tests). If the read-only test's message assertion fails, inspect the actual exception message and match on the actual sqlite wording (`attempt to write a readonly database`) — adjust the assertion string, not the read-only config.
 
 - [ ] **Step 5: Commit**
@@ -1221,7 +1223,7 @@ git commit -m "feat(viewer): problem-detail error handling and page envelope"
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/repo/WikiSummaryRepository.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/service/WikiService.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/web/WikisController.java`
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/WikiSummaryRepositoryTest.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/WikisControllerTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/WikiSummaryRepositoryIT.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/WikisControllerTest.java`
 
 **Interfaces:**
 - Consumes: `WikiRegistry.list()/rescan()/clientFor(id)` (Task 4), `WikiDbFixture` (Task 2).
@@ -1234,7 +1236,7 @@ git commit -m "feat(viewer): problem-detail error handling and page envelope"
 
 - [ ] **Step 1: Write the failing repository test**
 
-`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/WikiSummaryRepositoryTest.java`:
+`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/WikiSummaryRepositoryIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer.repo;
@@ -1254,7 +1256,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.offset;
 
 @Tag("integration")
-class WikiSummaryRepositoryTest {
+class WikiSummaryRepositoryIT {
 
     @TempDir
     Path tmp;
@@ -1294,7 +1296,7 @@ class WikiSummaryRepositoryTest {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.WikiSummaryRepositoryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.WikiSummaryRepositoryIT'`
 Expected: compilation FAILURE.
 
 - [ ] **Step 3: Implement DTO, repository, service, controller**
@@ -1474,7 +1476,7 @@ class WikisControllerTest {
 
 - [ ] **Step 5: Run all new tests**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.WikiSummaryRepositoryTest' --tests 'dev.makar.wikiforgeviewer.web.WikisControllerTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.WikiSummaryRepositoryIT' --tests 'dev.makar.wikiforgeviewer.web.WikisControllerTest'`
 Expected: PASS (4 tests).
 
 - [ ] **Step 6: Commit**
@@ -1493,7 +1495,7 @@ git commit -m "feat(viewer): /api/wikis list and rescan endpoints"
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/repo/StatsRepository.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/web/StatsController.java`
 - Modify: `viewer/src/main/java/dev/makar/wikiforgeviewer/service/WikiService.java` (add `stats(wikiId)`)
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/StatsRepositoryTest.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/StatsControllerTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/StatsRepositoryIT.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/StatsControllerTest.java`
 
 **Interfaces:**
 - Consumes: `WikiRegistry.clientFor` (Task 4), fixture (Task 2), Task 6's `WikiService`.
@@ -1506,7 +1508,7 @@ git commit -m "feat(viewer): /api/wikis list and rescan endpoints"
 
 - [ ] **Step 1: Write the failing repository test**
 
-`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/StatsRepositoryTest.java`:
+`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/StatsRepositoryIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer.repo;
@@ -1523,7 +1525,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Tag("integration")
-class StatsRepositoryTest {
+class StatsRepositoryIT {
 
     @TempDir
     Path tmp;
@@ -1556,7 +1558,7 @@ class StatsRepositoryTest {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.StatsRepositoryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.StatsRepositoryIT'`
 Expected: compilation FAILURE.
 
 - [ ] **Step 3: Implement**
@@ -1713,7 +1715,7 @@ class StatsControllerTest {
 
 - [ ] **Step 5: Run and verify**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.StatsRepositoryTest' --tests 'dev.makar.wikiforgeviewer.web.StatsControllerTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.StatsRepositoryIT' --tests 'dev.makar.wikiforgeviewer.web.StatsControllerTest'`
 Expected: PASS (3 tests).
 
 - [ ] **Step 6: Commit**
@@ -1732,7 +1734,7 @@ git commit -m "feat(viewer): per-wiki stats endpoint with confidence buckets and
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/repo/TopicRepository.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/service/TopicService.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/web/TopicsController.java`
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/TopicRepositoryTest.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/TopicsControllerTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/TopicRepositoryIT.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/TopicsControllerTest.java`
 
 **Interfaces:**
 - Consumes: registry (Task 4), fixture (Task 2), errors (Task 5).
@@ -1747,7 +1749,7 @@ git commit -m "feat(viewer): per-wiki stats endpoint with confidence buckets and
 
 - [ ] **Step 1: Write the failing repository test**
 
-`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/TopicRepositoryTest.java`:
+`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/TopicRepositoryIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer.repo;
@@ -1771,7 +1773,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Tag("integration")
-class TopicRepositoryTest {
+class TopicRepositoryIT {
 
     @TempDir
     Path tmp;
@@ -1843,7 +1845,7 @@ class TopicRepositoryTest {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.TopicRepositoryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.TopicRepositoryIT'`
 Expected: compilation FAILURE.
 
 - [ ] **Step 3: Implement**
@@ -2164,7 +2166,7 @@ class TopicsControllerTest {
 
 - [ ] **Step 5: Run and verify**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.TopicRepositoryTest' --tests 'dev.makar.wikiforgeviewer.web.TopicsControllerTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.TopicRepositoryIT' --tests 'dev.makar.wikiforgeviewer.web.TopicsControllerTest'`
 Expected: PASS (7 tests). If `NULLS LAST` trips older SQLite: replace with `a.confidence IS NULL, a.confidence DESC` (sqlite-jdbc 3.50 bundles SQLite ≥ 3.30, which supports NULLS LAST — this note exists only for downgraded environments).
 
 - [ ] **Step 6: Commit**
@@ -2183,7 +2185,7 @@ git commit -m "feat(viewer): topics list, topic detail with citations/conflicts/
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/repo/SourceRepository.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/service/SourceService.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/web/SourcesController.java`
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SourceRepositoryTest.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/SourcesControllerTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SourceRepositoryIT.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/SourcesControllerTest.java`
 
 **Interfaces:**
 - Consumes: registry, fixture, errors, `PageResponse` (Task 5).
@@ -2196,7 +2198,7 @@ git commit -m "feat(viewer): topics list, topic detail with citations/conflicts/
 
 - [ ] **Step 1: Write the failing repository test**
 
-`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SourceRepositoryTest.java`:
+`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SourceRepositoryIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer.repo;
@@ -2218,7 +2220,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Tag("integration")
-class SourceRepositoryTest {
+class SourceRepositoryIT {
 
     @TempDir
     Path tmp;
@@ -2273,7 +2275,7 @@ class SourceRepositoryTest {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SourceRepositoryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SourceRepositoryIT'`
 Expected: compilation FAILURE.
 
 - [ ] **Step 3: Implement**
@@ -2518,7 +2520,7 @@ class SourcesControllerTest {
 
 - [ ] **Step 5: Run and verify**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SourceRepositoryTest' --tests 'dev.makar.wikiforgeviewer.web.SourcesControllerTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SourceRepositoryIT' --tests 'dev.makar.wikiforgeviewer.web.SourcesControllerTest'`
 Expected: PASS (5 tests).
 
 - [ ] **Step 6: Commit**
@@ -2537,7 +2539,7 @@ git commit -m "feat(viewer): paged sources with type/title filters and cited-by 
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/repo/ResearchRepository.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/service/ResearchService.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/web/ResearchController.java`
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/ResearchRepositoryTest.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/ResearchControllerTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/ResearchRepositoryIT.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/ResearchControllerTest.java`
 
 **Interfaces:**
 - Consumes: registry, fixture, errors.
@@ -2550,7 +2552,7 @@ git commit -m "feat(viewer): paged sources with type/title filters and cited-by 
 
 - [ ] **Step 1: Write the failing repository test**
 
-`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/ResearchRepositoryTest.java`:
+`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/ResearchRepositoryIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer.repo;
@@ -2572,7 +2574,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Tag("integration")
-class ResearchRepositoryTest {
+class ResearchRepositoryIT {
 
     @TempDir
     Path tmp;
@@ -2621,7 +2623,7 @@ class ResearchRepositoryTest {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.ResearchRepositoryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.ResearchRepositoryIT'`
 Expected: compilation FAILURE.
 
 - [ ] **Step 3: Implement**
@@ -2836,7 +2838,7 @@ class ResearchControllerTest {
 
 - [ ] **Step 5: Run and verify**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.ResearchRepositoryTest' --tests 'dev.makar.wikiforgeviewer.web.ResearchControllerTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.ResearchRepositoryIT' --tests 'dev.makar.wikiforgeviewer.web.ResearchControllerTest'`
 Expected: PASS (3 tests).
 
 - [ ] **Step 6: Commit**
@@ -2855,7 +2857,7 @@ git commit -m "feat(viewer): research sessions with findings and thesis verdicts
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/repo/SpendActivityRepository.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/service/SpendActivityService.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/web/SpendActivityController.java`
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SpendActivityRepositoryTest.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/SpendActivityControllerTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SpendActivityRepositoryIT.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/web/SpendActivityControllerTest.java`
 
 **Interfaces:**
 - Consumes: registry, fixture, errors, `PageResponse`.
@@ -2869,7 +2871,7 @@ git commit -m "feat(viewer): research sessions with findings and thesis verdicts
 
 - [ ] **Step 1: Write the failing repository test**
 
-`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SpendActivityRepositoryTest.java`:
+`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SpendActivityRepositoryIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer.repo;
@@ -2894,7 +2896,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Tag("integration")
-class SpendActivityRepositoryTest {
+class SpendActivityRepositoryIT {
 
     @TempDir
     Path tmp;
@@ -2951,7 +2953,7 @@ class SpendActivityRepositoryTest {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SpendActivityRepositoryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SpendActivityRepositoryIT'`
 Expected: compilation FAILURE.
 
 - [ ] **Step 3: Implement**
@@ -3170,7 +3172,7 @@ class SpendActivityControllerTest {
 
 - [ ] **Step 5: Run and verify**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SpendActivityRepositoryTest' --tests 'dev.makar.wikiforgeviewer.web.SpendActivityControllerTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SpendActivityRepositoryIT' --tests 'dev.makar.wikiforgeviewer.web.SpendActivityControllerTest'`
 Expected: PASS (6 tests).
 
 - [ ] **Step 6: Commit**
@@ -3189,7 +3191,7 @@ git commit -m "feat(viewer): llm spend aggregation and activity feed"
 - Modify: `viewer/src/main/java/dev/makar/wikiforgeviewer/repo/SpendActivityRepository.java` (add `devlog`)
 - Modify: `viewer/src/main/java/dev/makar/wikiforgeviewer/service/SpendActivityService.java` (add `devlog`)
 - Modify: `viewer/src/main/java/dev/makar/wikiforgeviewer/web/SpendActivityController.java` (add route)
-- Test: extend `SpendActivityRepositoryTest` (new methods)
+- Test: extend `SpendActivityRepositoryIT` (new methods)
 
 **Interfaces:**
 - Consumes: Task 11's classes.
@@ -3199,7 +3201,7 @@ git commit -m "feat(viewer): llm spend aggregation and activity feed"
   - `SpendActivityService.devlog(String wikiId, int page, int size)`
   - Route: `GET /api/wikis/{wikiId}/devlog?page=&size=`
 
-- [ ] **Step 1: Add failing tests to `SpendActivityRepositoryTest`**
+- [ ] **Step 1: Add failing tests to `SpendActivityRepositoryIT`**
 
 ```java
     @Test
@@ -3224,7 +3226,7 @@ Add the import `dev.makar.wikiforgeviewer.dto.DevlogEntry;` to that test class.
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SpendActivityRepositoryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SpendActivityRepositoryIT'`
 Expected: compilation FAILURE — `DevlogEntry`/`devlog` missing.
 
 - [ ] **Step 3: Implement**
@@ -3297,7 +3299,7 @@ Add to `SpendActivityController`:
 
 - [ ] **Step 4: Run and verify**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SpendActivityRepositoryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SpendActivityRepositoryIT'`
 Expected: PASS (6 tests).
 
 - [ ] **Step 5: Commit**
@@ -3316,7 +3318,7 @@ git commit -m "feat(viewer): devlog feed merging dev_event sources with activity
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/repo/GraphRepository.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/service/GraphService.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/web/GraphController.java`
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/GraphRepositoryTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/GraphRepositoryIT.java`
 
 **Interfaces:**
 - Consumes: registry, fixture.
@@ -3327,7 +3329,7 @@ git commit -m "feat(viewer): devlog feed merging dev_event sources with activity
 
 - [ ] **Step 1: Write the failing test**
 
-`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/GraphRepositoryTest.java`:
+`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/GraphRepositoryIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer.repo;
@@ -3344,7 +3346,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Tag("integration")
-class GraphRepositoryTest {
+class GraphRepositoryIT {
 
     @TempDir
     Path tmp;
@@ -3377,7 +3379,7 @@ class GraphRepositoryTest {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.GraphRepositoryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.GraphRepositoryIT'`
 Expected: compilation FAILURE.
 
 - [ ] **Step 3: Implement**
@@ -3509,7 +3511,7 @@ public class GraphController {
 
 - [ ] **Step 4: Run and verify**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.GraphRepositoryTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.GraphRepositoryIT'`
 Expected: PASS (1 test).
 
 - [ ] **Step 5: Commit**
@@ -3528,7 +3530,7 @@ git commit -m "feat(viewer): topic graph endpoint with symmetric link dedup"
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/repo/SearchRepository.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/service/SearchService.java`
 - Create: `viewer/src/main/java/dev/makar/wikiforgeviewer/web/SearchController.java`
-- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SearchRepositoryTest.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/service/SearchServiceTest.java`
+- Test: `viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SearchRepositoryIT.java`, `viewer/src/test/java/dev/makar/wikiforgeviewer/service/SearchServiceTest.java`
 
 **Interfaces:**
 - Consumes: registry, fixture, errors.
@@ -3540,7 +3542,7 @@ git commit -m "feat(viewer): topic graph endpoint with symmetric link dedup"
 
 - [ ] **Step 1: Write the failing tests**
 
-`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SearchRepositoryTest.java`:
+`viewer/src/test/java/dev/makar/wikiforgeviewer/repo/SearchRepositoryIT.java`:
 
 ```java
 package dev.makar.wikiforgeviewer.repo;
@@ -3558,7 +3560,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Tag("integration")
-class SearchRepositoryTest {
+class SearchRepositoryIT {
 
     @TempDir
     Path tmp;
@@ -3655,7 +3657,7 @@ class SearchServiceTest {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SearchRepositoryTest' --tests 'dev.makar.wikiforgeviewer.service.SearchServiceTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SearchRepositoryIT' --tests 'dev.makar.wikiforgeviewer.service.SearchServiceTest'`
 Expected: compilation FAILURE.
 
 - [ ] **Step 3: Implement**
@@ -3792,7 +3794,7 @@ public class SearchController {
 
 - [ ] **Step 4: Run and verify**
 
-Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SearchRepositoryTest' --tests 'dev.makar.wikiforgeviewer.service.SearchServiceTest'`
+Run: `cd viewer && ./gradlew test --tests 'dev.makar.wikiforgeviewer.repo.SearchRepositoryIT' --tests 'dev.makar.wikiforgeviewer.service.SearchServiceTest'`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Run the FULL backend suite (checkpoint — backend complete)**
