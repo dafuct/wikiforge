@@ -1,6 +1,7 @@
 package dev.makar.wikiforgeviewer.repo;
 
 import dev.makar.wikiforgeviewer.dto.ActivityRow;
+import dev.makar.wikiforgeviewer.dto.DevlogEntry;
 import dev.makar.wikiforgeviewer.dto.PageResponse;
 import dev.makar.wikiforgeviewer.dto.SpendRow;
 import dev.makar.wikiforgeviewer.error.InvalidSearchQueryException;
@@ -50,6 +51,33 @@ public class SpendActivityRepository {
                         rs.getLong("id"), rs.getString("ts"), rs.getString("command"),
                         rs.getString("summary"),
                         rs.getObject("topic_id") == null ? null : rs.getLong("topic_id")))
+                .list();
+        return new PageResponse<>(items, total, page, size);
+    }
+
+    public PageResponse<DevlogEntry> devlog(JdbcClient client, int page, int size) {
+        long total = client.sql("""
+                SELECT (SELECT COUNT(*) FROM raw_sources WHERE source_type = 'dev_event')
+                     + (SELECT COUNT(*) FROM activity_log)
+                """).query(Long.class).single();
+        List<DevlogEntry> items = client.sql("""
+                SELECT kind, ref_id, title, ts, extra FROM (
+                    SELECT 'dev_event' AS kind, id AS ref_id, title, fetched_at AS ts,
+                           provenance AS extra
+                    FROM raw_sources WHERE source_type = 'dev_event'
+                    UNION ALL
+                    SELECT 'activity' AS kind, id AS ref_id,
+                           command || CASE WHEN summary <> '' THEN ' — ' || summary ELSE '' END,
+                           ts, args_redacted
+                    FROM activity_log
+                )
+                ORDER BY ts DESC LIMIT :limit OFFSET :offset
+                """)
+                .param("limit", size)
+                .param("offset", page * size)
+                .query((rs, i) -> new DevlogEntry(
+                        rs.getString("kind"), rs.getLong("ref_id"), rs.getString("title"),
+                        rs.getString("ts"), rs.getString("extra")))
                 .list();
         return new PageResponse<>(items, total, page, size);
     }

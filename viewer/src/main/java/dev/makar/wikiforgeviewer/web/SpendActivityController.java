@@ -1,6 +1,7 @@
 package dev.makar.wikiforgeviewer.web;
 
 import dev.makar.wikiforgeviewer.dto.ActivityRow;
+import dev.makar.wikiforgeviewer.dto.DevlogEntry;
 import dev.makar.wikiforgeviewer.dto.PageResponse;
 import dev.makar.wikiforgeviewer.dto.SpendRow;
 import dev.makar.wikiforgeviewer.service.SpendActivityService;
@@ -37,5 +38,13 @@ public class SpendActivityController {
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "25") @Min(1) @Max(200) int size) {
         return spendActivityService.activity(wikiId, page, size);
+    }
+
+    @GetMapping("/devlog")
+    public PageResponse<DevlogEntry> devlog(
+            @PathVariable String wikiId,
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "25") @Min(1) @Max(200) int size) {
+        return spendActivityService.devlog(wikiId, page, size);
     }
 }
