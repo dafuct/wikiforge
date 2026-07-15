@@ -22,3 +22,22 @@ def test_wiki_note_command_exists() -> None:
     body = (ROOT / "commands" / "wiki-note.md").read_text(encoding="utf-8")
     assert "wiki capture --note" in body
     assert "$ARGUMENTS" in body
+
+
+def _hooks() -> dict:
+    return json.loads(Path("hooks/hooks.json").read_text(encoding="utf-8"))["hooks"]
+
+
+def test_user_prompt_submit_hook_wired() -> None:
+    hooks = _hooks()
+    entries = hooks["UserPromptSubmit"][0]["hooks"]
+    assert any("wiki recall --hook" in h["command"] for h in entries)
+    assert all(h["command"].rstrip().endswith("true") for h in entries)  # fail-safe
+    assert entries[0].get("timeout") == 15
+
+
+def test_session_start_flushes_devlog_vectors() -> None:
+    hooks = _hooks()
+    commands = [h["command"] for h in hooks["SessionStart"][0]["hooks"]]
+    assert any("wiki capture --flush" in c for c in commands)
+    assert all(c.rstrip().endswith("true") for c in commands)

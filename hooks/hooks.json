@@ -7,6 +7,10 @@
             "type": "command",
             "command": "command -v wiki >/dev/null 2>&1 || uv tool install --quiet \"${CLAUDE_PLUGIN_ROOT}\" >/dev/null 2>&1 || true",
             "statusMessage": "wikiforge: ensuring the `wiki` CLI is installed (first run downloads dependencies — may take a few minutes)…"
+          },
+          {
+            "type": "command",
+            "command": "command -v wiki >/dev/null 2>&1 && wiki capture --flush >/dev/null 2>&1; true"
           }
         ]
       }
@@ -17,6 +21,17 @@
           {
             "type": "command",
             "command": "command -v wiki >/dev/null 2>&1 && wiki capture --hook; true"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v wiki >/dev/null 2>&1 && wiki recall --hook; true",
+            "timeout": 15
           }
         ]
       }

@@ -104,7 +104,7 @@ ingest / research  →  raw_sources (immutable)  →  chunks (FTS5 + vector inde
 - **Ingestion** canonicalizes URLs (strip tracking params, normalize host/scheme), extracts clean text (`trafilatura` for HTML, `pymupdf` for PDF), and dedups by `sha256` content hash. Re-ingesting the same content updates provenance, never the immutable text.
 - **Research** fans out persona agents (academic, technical, applied, news, contrarian, …) in waves using `asyncio.TaskGroup`, with a per-session USD budget and resumability. Each agent web-searches, stores its finding as an immutable source, and normalizes it into the schema.
 - **Compilation** synthesizes a topic's evidence into a Markdown article with inline citations, detects conflicts between sources, and computes a **confidence score in code** (source count, diversity, recency, evidence strength, minus a conflict penalty). Compilation is incremental — an unchanged content digest is skipped unless `--full`.
-- **Retrieval** merges FTS5 BM25 and `sqlite-vec` KNN rankings via Reciprocal Rank Fusion, at three depths (`quick` / `standard` / `deep`, the last adding raw sources and a cross-encoder rerank).
+- **Retrieval** merges FTS5 BM25 and `sqlite-vec` KNN rankings via Reciprocal Rank Fusion. `--scope` (`all` / `articles` / `devlog`) picks what's searched — everything, by default, at any depth. `--depth` (`quick` / `standard` / `deep`) picks ranking effort only; `deep` adds a cross-encoder rerank.
 - **Cost** for every LLM/embedding call is priced from the config and logged; `wiki stats` totals it.
 
 ---
@@ -113,20 +113,36 @@ ingest / research  →  raw_sources (immutable)  →  chunks (FTS5 + vector inde
 
 wikiforge can remember *why* your code got to be the way it is. When a Claude Code
 task edits files, a `Stop` hook records a **dev event** — your request (the why), the
-changed files + `git diff --stat` (the what), a cheap-LLM summary, an inferred type
-(feature/bugfix/research/…), and the time. It captures **uncommitted** work, so you
-never have to commit for the wiki to remember.
+changed files + `git diff --stat` (the what), an inferred type (feature/bugfix/research/…),
+and the time. It captures **uncommitted** work, so you never have to commit for the
+wiki to remember.
 
 - **Automatic:** fires when a task changed files. No action needed.
 - **Research notes:** for investigations that changed no files, run `/wikiforge:wiki-note "what you
   found and why it matters"`.
 - **Where it lands:** the project-local `.wikiforge/` if present, else your default wiki.
   Run `wiki init` there first.
-- **Read it back:** `wiki query --depth deep "why did we change the retriever?"`. Dev events are
-  indexed as raw sources, not compiled into articles, so only `--depth deep` searches them — the
-  default (`standard`) depth won't surface them.
-- **Privacy / control:** the raw request is stored (best-effort secret redaction). Turn it
-  off with `[capture] auto = false`, or raw-only with `summarize = false`, in `config.toml`.
+- **Summarization is zero-LLM by default.** `[capture] summarize` is `"off"` | `"sync"` | `"deferred"`
+  (default **`"deferred"`**): short requests (`<= summarize_min_chars`, default 200) become their own
+  summary verbatim, no LLM call, ever; longer ones are stored with no summary and marked
+  digest-pending. `"sync"` is the old behavior — one cheap-tier call per event, at capture time.
+  `"off"` never summarizes.
+- **Clearing the backlog:** `wiki capture --flush` backfills any dev-log chunks missing vectors (free,
+  no LLM) — the plugin's `SessionStart` hook already runs this once per session. Add `--digests` to
+  also batch-summarize pending events (one cheap-tier call per batch of up to 25) — run it yourself,
+  e.g. from a weekly cron, since the plugin never adds LLM cost automatically.
+- **Read it back:** `wiki query "why did we change the retriever?"` — dev events are searched by
+  default (`--scope all`, the default) at any `--depth`; scope, not depth, controls whether the dev
+  log is included. Use `--scope devlog` to search only dev events, `--scope articles` for only
+  compiled articles. `--depth deep` now only affects *ranking* (adds a cross-encoder rerank) — it no
+  longer changes what's visible.
+- **Proactive recall:** a `UserPromptSubmit` hook (`wiki recall --hook`, zero LLM, 15s timeout) injects
+  the most relevant wiki/dev-log excerpts into the session before the agent even starts, so it can
+  skip re-exploring what the wiki already knows. Configure it under `[recall]` in `config.toml`:
+  `enabled` (default `true`), `max_excerpts` (default 3), `max_chars` (default 600), and
+  `min_similarity` (default 0.35).
+- **Privacy / control:** the raw request is stored (best-effort secret redaction). Turn capture
+  off with `[capture] auto = false`, or raw-only with `summarize = "off"`, in `config.toml`.
 
 ---
 
@@ -139,7 +155,7 @@ never have to commit for the wiki to remember.
 | `wiki research "<topic>"` | Research a topic with persona agents. `--mode standard\|deep\|max`, `--new-topic`, `--budget <usd>`, `--resume <session-id>`. |
 | `wiki thesis "<claim>"` | Evaluate a claim with FOR/AGAINST agents → a cited verdict. `--mode`, `--budget`. |
 | `wiki compile` | Compile active topics into cited articles. `--full` recompiles everything. |
-| `wiki query "<question>"` | Answer a question over compiled knowledge, citing sources. `--depth quick\|standard\|deep`. |
+| `wiki query "<question>"` | Answer a question over compiled knowledge, citing sources. `--depth quick\|standard\|deep` (ranking effort only), `--scope all\|articles\|devlog` (default `all` — what's searched), `--extract` (zero-LLM: print excerpts instead of a synthesized answer). |
 | `wiki related <topic>` | List knowledge-graph neighbours of a topic. |
 | `wiki generate <kind> <topic>` | Generate a derived document (`report`, `slides-outline`, `summary`, `study-guide`, `timeline`, `glossary`, `comparison`). `--out <file>`. |
 | `wiki export <target>` | Export to `obsidian` (vault + frontmatter), `site` (static HTML + graph page), or `json` (structured dump). `--out <dir>`. |
@@ -249,6 +265,8 @@ Topics carry a volatility and a staleness window. `wiki refresh` lists lapsed to
 ## MCP server
 
 `wiki serve-mcp` exposes the wiki over the Model Context Protocol (stdio transport) for use by MCP-capable agents. Registered tools: `search_knowledge`, `get_article`, `list_topics`, `ingest_source`, `start_research`, `evaluate_thesis`, `find_related`, `get_activity_context`, `get_stats`, `generate_output` — each calling the same service functions the CLI uses.
+
+`search_knowledge(question, depth, mode, scope)` defaults to **`mode="extract"`** — zero LLM calls, returns cited excerpts for the calling agent to synthesize in its own context. Pass `mode="synthesize"` to have the wiki's own LLM write the prose answer instead (the `wiki query` behavior). `scope` (`all` | `articles` | `devlog`) controls what's searched; `depth` (`quick` | `standard` | `deep`) controls ranking effort only.
 
 Example client entry (Claude Desktop / any MCP client):
 

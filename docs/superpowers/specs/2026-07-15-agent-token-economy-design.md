@@ -46,7 +46,7 @@ Two read-path defects compound this:
 
 Backward compatibility: `CaptureConfig.summarize` becomes `Literal["off", "sync", "deferred"]` with a field validator coercing legacy booleans (`true` → `"sync"`, `false` → `"off"`), so existing `config.toml` files keep working. New key `summarize_min_chars: int = 200`.
 
-### 4.2 `wiki capture flush` — deferred batch work
+### 4.2 `wiki capture --flush` — deferred batch work
 
 New CLI command (service wrapper `run_capture_flush`), two jobs:
 
@@ -132,8 +132,8 @@ The dominant cost is lazy-loading the local sentence-transformers model per invo
 
 Capture keeps FTS-only indexing at hook time (instant, no model load in the Stop hook). Vectors are **backfilled** where latency is already tolerated:
 
-- `wiki capture flush` (§4.2, job 1) — always backfills.
-- Plugin **SessionStart** hook appends `wiki capture flush` (embed backfill only — no `--digests`, so zero tokens; output redirected to /dev/null in the hook command, matching the existing install-check pattern) after the existing install check. Once per session, a few seconds, free.
+- `wiki capture --flush` (§4.2, job 1) — always backfills.
+- Plugin **SessionStart** hook appends `wiki capture --flush` (embed backfill only — no `--digests`, so zero tokens; output redirected to /dev/null in the hook command, matching the existing install-check pattern) after the existing install check. Once per session, a few seconds, free.
 
 Repository addition: `chunks_missing_vectors(owner_type="raw_source", limit)` (chunk rows with no `vec0` row). Embeddings go through the existing `CachedEmbeddingProvider` — identical text is never embedded twice.
 
@@ -153,7 +153,7 @@ Extract mode and recall move raw stored text into an agent's context, so the sea
 | File-editing dev task (Stop hook) | 1 cheap call (~22K overhead) | **0 calls** |
 | Agent asks the wiki (MCP/slash) | 1 flagship call (~22K+ overhead) | **0 calls** (agent synthesizes in paid context) |
 | Every user prompt (recall) | 0 calls, but agent re-explores codebase | **0 calls** + injected memory → fewer Read/Grep tokens |
-| Weekly `wiki capture flush --digests` (opt-in) | n/a | 1 cheap call per 25 pending events |
+| Weekly `wiki capture --flush --digests` (opt-in) | n/a | 1 cheap call per 25 pending events |
 
 ## 10. Testing
 
