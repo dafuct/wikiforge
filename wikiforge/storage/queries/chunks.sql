@@ -14,3 +14,11 @@ RETURNING rowid;
 
 -- name: insert_chunk_vector!
 INSERT INTO chunks_vec (rowid, embedding) VALUES (:rowid, :embedding);
+
+-- name: chunks_missing_vectors
+SELECT c.rowid AS rowid, c.text AS text
+FROM chunks c
+WHERE c.owner_type = :owner_type
+  AND c.rowid NOT IN (SELECT rowid FROM chunks_vec)
+ORDER BY c.rowid
+LIMIT :limit;

@@ -329,6 +329,45 @@ class Repository:
             await self._q.insert_chunk_vector(self._db.conn, rowid=rowid, embedding=literal)
             await self._db.conn.commit()
 
+    async def chunks_missing_vectors(self, *, owner_type: str, limit: int) -> list[tuple[int, str]]:
+        """Return ``(rowid, text)`` for chunks of this owner type with no vector row."""
+        return [
+            (int(r["rowid"]), str(r["text"]))
+            async for r in self._q.chunks_missing_vectors(
+                self._db.conn, owner_type=owner_type, limit=limit
+            )
+        ]
+
+    async def dev_events_pending_digest(self, *, limit: int) -> list[RawSource]:
+        """Return dev-event raw sources whose provenance marks the digest as pending."""
+        out: list[RawSource] = []
+        async for row in self._q.dev_events_pending_digest(self._db.conn, limit=limit):
+            out.append(
+                RawSource(
+                    id=row["id"],
+                    content_hash=row["content_hash"],
+                    canonical_url=row["canonical_url"],
+                    source_type=SourceType(row["source_type"]),
+                    title=row["title"],
+                    text=row["text"],
+                    fetched_at=row["fetched_at"],
+                    first_seen_session_id=row["first_seen_session_id"],
+                    persona=row["persona"],
+                    provenance=json.loads(row["provenance"]),
+                )
+            )
+        return out
+
+    async def set_raw_source_provenance(
+        self, content_hash: str, provenance: dict[str, str]
+    ) -> None:
+        """Replace a raw source's provenance JSON. Text and hash stay immutable."""
+        async with self._db.lock:
+            await self._q.update_raw_source_provenance(
+                self._db.conn, provenance=json.dumps(provenance), content_hash=content_hash
+            )
+            await self._db.conn.commit()
+
     async def create_research_session(self, session: ResearchSession) -> int:
         """Insert a research session and return its id."""
         async with self._db.lock:
@@ -661,12 +700,16 @@ class Repository:
         """Return chunk rowids matching an FTS5 query, best BM25 match first.
 
         Picks the ``_articles``-scoped query when ``owner_types == ["article"]``,
+        the ``_raw_sources``-scoped query when ``owner_types == ["raw_source"]``,
         else the unscoped query over all owner types (static SQL, no dynamic
         ``IN (:list)`` interpolation).
         """
-        search = (
-            self._q.fts_search_articles if owner_types == ["article"] else self._q.fts_search_all
-        )
+        if owner_types == ["article"]:
+            search = self._q.fts_search_articles
+        elif owner_types == ["raw_source"]:
+            search = self._q.fts_search_raw_sources
+        else:
+            search = self._q.fts_search_all
         return [int(r["rowid"]) async for r in search(self._db.conn, query=query, limit=limit)]
 
     async def vec_search(
@@ -676,12 +719,16 @@ class Repository:
 
         Binds the query vector as a JSON-array string literal, the same form
         used by :meth:`insert_chunk_vector`. Picks the ``_articles``-scoped
-        query when ``owner_types == ["article"]``, else the unscoped query.
+        query when ``owner_types == ["article"]``, the ``_raw_sources``-scoped
+        query when ``owner_types == ["raw_source"]``, else the unscoped query.
         """
         literal = "[" + ",".join(repr(float(x)) for x in query_vector) + "]"
-        search = (
-            self._q.vec_search_articles if owner_types == ["article"] else self._q.vec_search_all
-        )
+        if owner_types == ["article"]:
+            search = self._q.vec_search_articles
+        elif owner_types == ["raw_source"]:
+            search = self._q.vec_search_raw_sources
+        else:
+            search = self._q.vec_search_all
         return [
             int(r["rowid"]) async for r in search(self._db.conn, query_vector=literal, limit=limit)
         ]

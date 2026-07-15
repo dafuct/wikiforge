@@ -25,6 +25,18 @@ FROM chunks_vec v JOIN chunks c ON c.rowid = v.rowid
 WHERE v.embedding MATCH :query_vector AND k = :limit
 ORDER BY v.distance;
 
+-- name: fts_search_raw_sources
+SELECT c.rowid AS rowid
+FROM chunks_fts f JOIN chunks c ON c.rowid = f.rowid
+WHERE f.chunks_fts MATCH :query AND c.owner_type = 'raw_source'
+ORDER BY bm25(chunks_fts) LIMIT :limit;
+
+-- name: vec_search_raw_sources
+SELECT c.rowid AS rowid
+FROM chunks_vec v JOIN chunks c ON c.rowid = v.rowid
+WHERE v.embedding MATCH :query_vector AND k = :limit AND c.owner_type = 'raw_source'
+ORDER BY v.distance;
+
 -- name: chunk_target^
 SELECT c.rowid AS rowid, c.owner_type AS owner_type, c.owner_id AS owner_id, c.seq AS seq, c.text AS text,
        t.id AS topic_id, t.status AS topic_status
