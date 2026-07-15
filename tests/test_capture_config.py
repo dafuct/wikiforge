@@ -59,7 +59,7 @@ def test_recall_defaults() -> None:
     assert cfg.enabled is True
     assert cfg.max_excerpts == 3
     assert cfg.max_chars == 600
-    assert cfg.min_similarity == 0.35
+    assert cfg.min_similarity == 0.6
 
 
 def test_default_template_round_trips_new_sections(tmp_path: Path) -> None:
