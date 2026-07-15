@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from wikiforge.config.defaults import DEFAULT_CONFIG_TOML
 from wikiforge.models.enums import LlmBackend
@@ -114,10 +115,30 @@ class CaptureConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     auto: bool = True
-    summarize: bool = True
+    summarize: Literal["off", "sync", "deferred"] = "deferred"
+    summarize_min_chars: int = 200
     topic_label: str = "development-log"
     max_diff_lines: int = 200
     redact: bool = True
+
+    @field_validator("summarize", mode="before")
+    @classmethod
+    def _coerce_legacy_bool(cls, value: object) -> object:
+        """Accept the pre-mode booleans: true -> "sync", false -> "off"."""
+        if isinstance(value, bool):
+            return "sync" if value else "off"
+        return value
+
+
+class RecallConfig(BaseModel):
+    """UserPromptSubmit recall-hook settings (zero-LLM memory injection)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    max_excerpts: int = 3
+    max_chars: int = 600
+    min_similarity: float = 0.35
 
 
 class Config(BaseModel):
@@ -136,6 +157,7 @@ class Config(BaseModel):
     confidence: ConfidenceConfig
     llm: LlmConfig = LlmConfig()
     capture: CaptureConfig = CaptureConfig()
+    recall: RecallConfig = RecallConfig()
 
     def model_for_task(self, task: str, tier: str | None = None) -> str:
         """Resolve a task (and optional explicit tier override) to a model ID.
