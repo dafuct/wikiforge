@@ -16,6 +16,7 @@
 - **Never reference `chunks_vec`** (vec0 virtual table; querying it without the native sqlite-vec extension errors).
 - **No `spring-boot-starter-jdbc`.** DataSources are built manually by the registry; the starter's auto-configuration would demand a `spring.datasource.url` at startup. Use plain `org.springframework:spring-jdbc` + `com.zaxxer:HikariCP`.
 - **No `@Transactional`.** There is no Spring-managed TransactionManager (multiple dynamic DataSources, single read-only SELECTs). This consciously refines the spec's service-layer line; the rest of the house service rules apply (constructor injection, no servlet types in services, domain exceptions).
+- **No `@Validated` on controller classes** (verified empirically in Task 9, matches Spring Framework 6.1+ behavior): `@Min`/`@Max` on `@RequestParam` fire on their own via Spring's built-in method validation, which throws `HandlerMethodValidationException` → the advice maps it to 400. Adding `@Validated` to the class instead activates the *legacy AOP* `MethodValidationInterceptor`, which takes precedence and throws `ConstraintViolationException` — unmapped by the advice, so the caller gets a 500. Param constraints alone are correct and sufficient.
 - Spring Boot 4 specifics (verified against 4.0 docs): starter is `spring-boot-starter-webmvc`; `@WebMvcTest` lives at `org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest` and requires the `spring-boot-webmvc-test` test artifact (SB4 split the test slices out of `starter-test`); mock beans with `@MockitoBean` from `org.springframework.test.context.bean.override.mockito.MockitoBean` (`@MockBean` is gone).
 - Java: records for all DTOs; constructor injection only; test names `should_doX_when_Y`; AssertJ for assertions; integration tests tagged `@Tag("integration")` AND named `{ClassUnderTest}IT` (unit tests keep the `Test` suffix) per the house java-tests rules; no `Thread.sleep`.
 - Timestamps from SQLite are passed through as ISO `TEXT` strings (`String` fields in DTOs) — no parsing, the DB stores `datetime('now')` text.
@@ -2438,15 +2439,16 @@ import dev.makar.wikiforgeviewer.dto.SourceRow;
 import dev.makar.wikiforgeviewer.service.SourceService;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+// NO @Validated on the class — see Global Constraints. The @Min/@Max on the
+// params fire via Spring's built-in method validation and surface as
+// HandlerMethodValidationException, which the advice maps to 400.
 @RestController
-@Validated
 @RequestMapping("/api/wikis/{wikiId}/sources")
 public class SourcesController {
 
@@ -3088,15 +3090,14 @@ import dev.makar.wikiforgeviewer.service.SpendActivityService;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import java.util.List;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+// NO @Validated on the class — see Global Constraints.
 @RestController
-@Validated
 @RequestMapping("/api/wikis/{wikiId}")
 public class SpendActivityController {
 
