@@ -44,8 +44,8 @@ class _OneShotBatchLLM:
     async def parse(self, purpose, system, user, *, tier=None, schema, topic_id=None,
                     session_id=None):
         out = BatchDigestOut(items=[BatchDigestItem(
-            id=self._sid, summary="Replaced async callbacks with a synchronous queue "
-            "to fix a deadlock.", type="refactor")])
+            id=self._sid, summary="Adopted a blocking dispatch model to remove the "
+            "race condition.", type="refactor")])
         return ParsedResult(parsed=out, input_tokens=1, output_tokens=1, model="fake")
 
     async def complete(self, *a, **k):  # pragma: no cover
@@ -70,21 +70,30 @@ async def test_saved_then_found(tmp_path: Path) -> None:
             default_type="change", origin="hook", cfg=cfg, llm=None, now=_NOW,
             git_runner=lambda argv: "",
         )
-        assert src is not None and src.provenance["digest"] == "pending"
+        assert src is not None
+        assert src.provenance["digest"] == "pending"
         assert src.id is not None
 
         # 2. Flush with digests: vectors backfilled, summary applied.
         stats = await flush_dev_events(
             repo, embedder, _OneShotBatchLLM(src.id), cfg, digests=True
         )
-        assert stats.embedded_chunks > 0 and stats.digested_events == 1
+        assert stats.embedded_chunks > 0
+        assert stats.digested_events == 1
 
         # 3. Recall with DIFFERENT words ("паралельність", not "deadlock").
+        # Retrieval fires on event.text's own concurrency words ("deadlock"/"async"),
+        # not on the digest summary — so this proves semantic recall works regardless
+        # of digest content.
         retriever = HybridRetriever(repo, embedder, cfg)
         out = await recall_excerpts(
             retriever, embedder, cfg, "у нас проблема з паралельністю в мості, що робити?"
         )
         assert out.startswith(RECALL_HEADER)
-        assert "synchronous queue" in out          # the event came back semantically
+        assert "synchronous queue" in out          # raw request text came back semantically
+        # This phrase exists ONLY in the digest summary (never in _REQUEST or other
+        # rendered note sections), so its presence proves the digest content itself —
+        # not just the raw request text — survived flush's re-index into recall.
+        assert "blocking dispatch" in out
     finally:
         await db.close()
