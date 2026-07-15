@@ -81,9 +81,16 @@ conflict_penalty_cap = 0.4
 backend = "api"
 
 [capture]
-auto = true               # auto-capture when Claude Code task changed files
-summarize = true          # LLM summary + classification (cheap tier); false = raw list
-topic_label = "development-log"   # provenance label grouping these events
-max_diff_lines = 200      # cap on stored `git diff --stat` output
-redact = true             # scrub obvious secrets from the stored request text
+auto = true                # auto-capture when a Claude Code task changed files
+summarize = "deferred"     # off | sync | deferred: digests via `capture --flush --digests`
+summarize_min_chars = 200  # deferred mode: requests this short need no digest (own summary)
+topic_label = "development-log"
+max_diff_lines = 200
+redact = true
+
+[recall]
+enabled = true             # UserPromptSubmit hook: inject wiki excerpts into session (no LLM)
+max_excerpts = 3
+max_chars = 600
+min_similarity = 0.35
 """
