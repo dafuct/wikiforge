@@ -16,7 +16,7 @@
 - **Never reference `chunks_vec`** (vec0 virtual table; querying it without the native sqlite-vec extension errors).
 - **No `spring-boot-starter-jdbc`.** DataSources are built manually by the registry; the starter's auto-configuration would demand a `spring.datasource.url` at startup. Use plain `org.springframework:spring-jdbc` + `com.zaxxer:HikariCP`.
 - **No `@Transactional`.** There is no Spring-managed TransactionManager (multiple dynamic DataSources, single read-only SELECTs). This consciously refines the spec's service-layer line; the rest of the house service rules apply (constructor injection, no servlet types in services, domain exceptions).
-- Spring Boot 4 specifics (verified against 4.0 docs): starter is `spring-boot-starter-webmvc`; `@WebMvcTest` lives at `org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest`; mock beans with `@MockitoBean` from `org.springframework.test.context.bean.override.mockito.MockitoBean` (`@MockBean` is gone).
+- Spring Boot 4 specifics (verified against 4.0 docs): starter is `spring-boot-starter-webmvc`; `@WebMvcTest` lives at `org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest` and requires the `spring-boot-webmvc-test` test artifact (SB4 split the test slices out of `starter-test`); mock beans with `@MockitoBean` from `org.springframework.test.context.bean.override.mockito.MockitoBean` (`@MockBean` is gone).
 - Java: records for all DTOs; constructor injection only; test names `should_doX_when_Y`; AssertJ for assertions; integration tests tagged `@Tag("integration")` AND named `{ClassUnderTest}IT` (unit tests keep the `Test` suffix) per the house java-tests rules; no `Thread.sleep`.
 - Timestamps from SQLite are passed through as ISO `TEXT` strings (`String` fields in DTOs) — no parsing, the DB stores `datetime('now')` text.
 - `chunks.owner_type` values are exactly `'article'` and `'raw_source'` (verified in `wikiforge/compile/compiler.py`, `wikiforge/search/retriever.py`).
@@ -142,6 +142,8 @@ dependencies {
     implementation 'org.xerial:sqlite-jdbc:3.50.3.0'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // Spring Boot 4 moved the test slices into per-slice artifacts; @WebMvcTest lives here.
+    testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
 }
 
 tasks.named('test') {
