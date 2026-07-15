@@ -1,5 +1,7 @@
 package dev.makar.wikiforgeviewer.web;
 
+import dev.makar.wikiforgeviewer.dto.ActivityRow;
+import dev.makar.wikiforgeviewer.dto.PageResponse;
 import dev.makar.wikiforgeviewer.dto.SpendRow;
 import dev.makar.wikiforgeviewer.error.InvalidSearchQueryException;
 import dev.makar.wikiforgeviewer.service.SpendActivityService;
@@ -39,6 +41,29 @@ class SpendActivityControllerTest {
                 .willThrow(new InvalidSearchQueryException("unknown group: user"));
 
         assertThat(mvc.get().uri("/api/wikis/global/spend?group=user"))
+                .hasStatus(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void should_returnActivityPage_when_getActivity() {
+        // topicId is deliberately null: the envelope must still serialize (a Jackson
+        // failure on the nullable field would surface as a 500, not an OK).
+        given(spendActivityService.activity("global", 0, 25)).willReturn(
+                new PageResponse<>(List.of(new ActivityRow(
+                        801, "2026-07-01 11:00:00", "compile", "compiled article", null)),
+                        1, 0, 25));
+
+        var json = assertThat(mvc.get().uri("/api/wikis/global/activity"))
+                .hasStatusOk()
+                .bodyJson();
+        json.extractingPath("$.total").isEqualTo(1);
+        json.extractingPath("$.items[0].command").isEqualTo("compile");
+    }
+
+    @Test
+    void should_return400_when_activitySizeTooLarge() {
+        // No stub: the request must fail on the @Max(200) bound before reaching the service.
+        assertThat(mvc.get().uri("/api/wikis/global/activity?size=9999"))
                 .hasStatus(HttpStatus.BAD_REQUEST);
     }
 }
