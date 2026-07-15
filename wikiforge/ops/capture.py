@@ -40,6 +40,61 @@ def redact_secrets(text: str) -> str:
     return text
 
 
+_TYPE_RULES: list[tuple[str, re.Pattern[str]]] = [
+    (
+        "bugfix",
+        re.compile(
+            r"\b(fix|bug|broken|crash|error|regress)|виправ|полагод|баг",
+            re.IGNORECASE,
+        ),
+    ),
+    ("docs", re.compile(r"\b(doc|docs|readme|changelog)|документац", re.IGNORECASE)),
+    ("spec", re.compile(r"\b(spec|specification)|специфікац", re.IGNORECASE)),
+    (
+        "design",
+        re.compile(
+            r"\b(design|architecture)|дизайн|архітектур", re.IGNORECASE
+        ),
+    ),
+    (
+        "research",
+        re.compile(
+            r"\b(research|investigat|explore|why)|дослід|чому", re.IGNORECASE
+        ),
+    ),
+    (
+        "refactor",
+        re.compile(
+            r"\b(refactor|rename|restructure|simplif|clean\s?up)|рефактор",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "chore",
+        re.compile(
+            r"\b(test|ci|lint|format|bump|upgrade|dependenc)|тест",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
+
+def infer_event_type(request: str, files: list[str]) -> str | None:
+    """Classify a dev event by keyword rules — no LLM. ``None`` when nothing matches.
+
+    Request-text rules are checked in order (first match wins), then file-path
+    signals: an all-Markdown change is docs, test-path changes are chores.
+    """
+    for label, pattern in _TYPE_RULES:
+        if pattern.search(request):
+            return label
+    if files and all(f.lower().endswith(".md") for f in files):
+        return "docs"
+    if any("test" in f.lower() for f in files):
+        return "chore"
+    return None
+
+
 def parse_hook_stdin(raw: str) -> str | None:
     """Return the ``transcript_path`` from Claude Code Stop-hook JSON, or None."""
     try:
