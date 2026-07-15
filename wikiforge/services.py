@@ -679,6 +679,33 @@ async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
         await db.close()
 
 
+async def run_recall_hook(home: Path, hook_stdin: str) -> str:
+    """Return sealed wiki excerpts for a UserPromptSubmit payload; "" on any skip.
+
+    Builds only the embedder + retriever — never an LLM provider (zero LLM calls).
+    """
+    from wikiforge.embed.factory import build_embedding_provider
+    from wikiforge.ops.recall import parse_prompt_hook_stdin, recall_excerpts, should_recall
+    from wikiforge.search.retriever import HybridRetriever
+
+    if not (home / CONFIG_FILENAME).exists():
+        return ""
+    cfg = load_config(home)
+    if not cfg.recall.enabled:
+        return ""
+    prompt = parse_prompt_hook_stdin(hook_stdin)
+    if prompt is None or not should_recall(prompt):
+        return ""
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        embedder = build_embedding_provider(cfg, repo)
+        retriever = HybridRetriever(repo, embedder, cfg)
+        return await recall_excerpts(retriever, embedder, cfg, prompt)
+    finally:
+        await db.close()
+
+
 async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
     """Backfill dev-log vectors; with ``digests`` also batch-summarize pending events."""
     from wikiforge.activity.cost import CostTracker
