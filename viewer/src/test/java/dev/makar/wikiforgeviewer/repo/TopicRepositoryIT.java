@@ -2,6 +2,7 @@ package dev.makar.wikiforgeviewer.repo;
 
 import dev.makar.wikiforgeviewer.dto.TopicDetail;
 import dev.makar.wikiforgeviewer.dto.TopicRow;
+import dev.makar.wikiforgeviewer.error.InvalidSearchQueryException;
 import dev.makar.wikiforgeviewer.error.ResourceNotFoundException;
 import dev.makar.wikiforgeviewer.fixture.WikiDbFixture;
 import dev.makar.wikiforgeviewer.registry.ReadOnlySqliteDataSources;
@@ -60,6 +61,12 @@ class TopicRepositoryIT {
         List<TopicRow> rows = repository.list(client, null, "confidence");
 
         assertThat(rows.get(0).slug()).isEqualTo("rust-async");
+    }
+
+    @Test
+    void should_throwInvalidSearchQuery_when_sortKeyUnknown() {
+        assertThatThrownBy(() -> repository.list(client, null, "bogus"))
+                .isInstanceOf(InvalidSearchQueryException.class);
     }
 
     @Test
