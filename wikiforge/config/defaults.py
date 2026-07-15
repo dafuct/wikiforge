@@ -92,5 +92,5 @@ redact = true
 enabled = true             # UserPromptSubmit hook: inject wiki excerpts into session (no LLM)
 max_excerpts = 3
 max_chars = 600
-min_similarity = 0.35
+min_similarity = 0.6     # measured on bge-small: unrelated prompts peak ~0.50, relevant ~0.72+
 """

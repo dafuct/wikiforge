@@ -105,14 +105,14 @@ Reads the Claude Code **UserPromptSubmit** hook JSON from stdin (`prompt` field;
 
 1. **Skips silently** (empty stdout, exit 0) when: recall disabled; prompt shorter than 20 chars; prompt starts with `/` (slash command); wiki DB missing.
 2. Runs hybrid retrieval with `scope=all` (articles + dev events).
-3. **Relevance gate:** compute cosine similarity between the prompt vector and each candidate chunk vector (embeddings are normalized, so dot product). Keep chunks with similarity ≥ `min_similarity` (default **0.35**); FTS-only chunks (no vector yet) pass only on an exact-ish keyword signal (BM25 rank ≤ 2). If nothing passes: empty stdout — **no injection, no noise**.
+3. **Relevance gate:** compute cosine similarity between the prompt vector and each candidate chunk vector (embeddings are normalized, so dot product). Keep chunks with similarity ≥ `min_similarity` (default **0.6**), capped at `max_excerpts`. If nothing passes: empty stdout — **no injection, no noise**. The threshold is **empirically calibrated** against the default local `bge-small-en-v1.5` embedder on a live wiki (2026-07-15): unrelated prompts ("what should I cook for dinner") peak at **0.42–0.50**, genuinely relevant ones score **0.72–0.87**. These models have a high similarity floor, so a naive low threshold (the originally-specified 0.35) sits *below the noise floor* and injects on every prompt. 0.6 sits in the measured gap. Re-measure if the embedding model changes.
 4. Print at most `max_excerpts` (default **3**) excerpts, each truncated to `max_chars` (default **600**), in a sealed envelope (§8).
 
 Stdout of a UserPromptSubmit hook is appended to the agent's context — that is the whole delivery mechanism. Zero LLM calls; one local embed of the prompt.
 
 ### 6.2 Config and plugin wiring
 
-New `[recall]` config block: `enabled: bool = true`, `max_excerpts: int = 3`, `max_chars: int = 600`, `min_similarity: float = 0.35`.
+New `[recall]` config block: `enabled: bool = true`, `max_excerpts: int = 3`, `max_chars: int = 600`, `min_similarity: float = 0.6`.
 
 `hooks/hooks.json` adds:
 
@@ -169,7 +169,7 @@ F1 (capture modes + heuristic) → F4 repo/backfill plumbing → F2 (scope overr
 
 ## 12. Risks
 
-- **Recall noise on weak matches** — mitigated by the similarity gate defaulting conservative (0.35) and the strict excerpt/char caps; worst case is a few hundred injected chars.
+- **Recall noise on weak matches** — mitigated by the similarity gate (0.6, empirically calibrated per §6.1) and the strict excerpt/char caps; worst case is a few hundred injected chars. This risk **materialized** at the originally-specified 0.35 and was fixed by measurement, not guesswork.
 - **Raw-source noise at default scope** — with `scope=all` the default, uncompiled raw text competes with curated article chunks at `standard` depth (no reranker). RRF fusion and `top_k` bound the blast radius; `--scope articles` is the curated-only escape hatch and `--depth deep` adds the reranker when precision matters.
 - **Heuristic type misclassification** — cosmetic (a changelog label); `--type` and `--digests` both override.
 - **`summarize` config type change** — handled by the bool-coercion validator; `extra="forbid"` untouched.

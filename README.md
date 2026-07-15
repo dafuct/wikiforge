@@ -140,7 +140,8 @@ wiki to remember.
   the most relevant wiki/dev-log excerpts into the session before the agent even starts, so it can
   skip re-exploring what the wiki already knows. Configure it under `[recall]` in `config.toml`:
   `enabled` (default `true`), `max_excerpts` (default 3), `max_chars` (default 600), and
-  `min_similarity` (default 0.35).
+  `min_similarity` (default 0.6 — measured on the default `bge-small` embedder, unrelated prompts
+  peak around 0.50 while genuinely relevant ones score 0.72+; lower it and recall injects noise).
 - **Privacy / control:** the raw request is stored (best-effort secret redaction). Turn capture
   off with `[capture] auto = false`, or raw-only with `summarize = "off"`, in `config.toml`.
 
