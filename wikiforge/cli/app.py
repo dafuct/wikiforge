@@ -508,6 +508,31 @@ def capture(
     typer.echo(f"Captured dev event: {source.title}")
 
 
+@app.command()
+def recall(
+    home: str | None = HomeOption,
+    hook: bool = typer.Option(
+        False, "--hook", help="Read Claude Code UserPromptSubmit JSON from stdin."
+    ),
+) -> None:
+    """Print relevant wiki excerpts for a prompt (UserPromptSubmit hook; zero LLM calls)."""
+    if not hook:
+        typer.echo("recall currently supports only --hook", err=True)
+        raise typer.Exit(code=2)
+    try:
+        import sys
+
+        from wikiforge.paths import resolve_capture_home
+        from wikiforge.services import run_recall_hook
+
+        target_home = resolve_capture_home(home)
+        output = asyncio.run(run_recall_hook(target_home, sys.stdin.read()))
+        if output:
+            typer.echo(output)
+    except Exception as exc:  # hook fail-safe: never break the session
+        typer.echo(f"recall failed: {exc}", err=True)
+
+
 def main() -> None:
     """Console-script entry point."""
     app()
