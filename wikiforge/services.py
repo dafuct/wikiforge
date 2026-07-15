@@ -35,6 +35,7 @@ from wikiforge.models.domain import (
     Topic,
 )
 from wikiforge.models.enums import ExportTarget, OutputKind, QueryDepth
+from wikiforge.ops.flush import FlushStats
 from wikiforge.output.exporter import Exporter
 from wikiforge.output.generator import OutputGenerator
 from wikiforge.query.service import QueryResult
@@ -674,5 +675,31 @@ async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
             repo, request=turn.request, files=turn.files, event_type=None,
             default_type="change", origin="hook", cfg=cfg, llm=llm, now=datetime.now(UTC),
         )
+    finally:
+        await db.close()
+
+
+async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
+    """Backfill dev-log vectors; with ``digests`` also batch-summarize pending events."""
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.embed.factory import build_embedding_provider
+    from wikiforge.llm.factory import build_llm_provider
+    from wikiforge.ops.flush import flush_dev_events
+
+    if not (home / CONFIG_FILENAME).exists():
+        return FlushStats(embedded_chunks=0, digested_events=0, pending_left=0)
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        tracker = CostTracker(repo, cfg)
+        embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
+        llm = None
+        if digests:
+            try:
+                llm = build_llm_provider(cfg, tracker)
+            except Exception:
+                llm = None
+        return await flush_dev_events(repo, embedder, llm, cfg, digests=digests)
     finally:
         await db.close()

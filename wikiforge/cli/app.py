@@ -458,8 +458,27 @@ def capture(
     type_: str | None = typer.Option(
         None, "--type", help="Event type label (feature/bugfix/research/design/...)."
     ),
+    flush: bool = typer.Option(
+        False, "--flush",
+        help="Backfill dev-log vectors (free); with --digests also batch-summarize pending events.",
+    ),
+    digests: bool = typer.Option(
+        False, "--digests", help="With --flush: one cheap LLM call per batch of pending events."
+    ),
 ) -> None:
     """Record a development event: auto from a Stop hook (--hook), or a manual --note."""
+    if flush:
+        from wikiforge.paths import resolve_capture_home
+        from wikiforge.services import run_capture_flush
+
+        target_home = resolve_capture_home(home)
+        stats = asyncio.run(run_capture_flush(target_home, digests=digests))
+        typer.echo(
+            f"flush: {stats.embedded_chunks} chunks embedded, "
+            f"{stats.digested_events} events digested, {stats.pending_left} pending"
+        )
+        return
+
     if hook:
         try:
             import sys
