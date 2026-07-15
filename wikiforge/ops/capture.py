@@ -44,35 +44,39 @@ _TYPE_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "bugfix",
         re.compile(
-            r"\b(fix|bug|broken|crash|error|regress)|виправ|полагод|баг",
+            r"\b(fix(es|ed|ing)?|bug|broken|crash|error)\b|regress|виправ|полагод|баг",
             re.IGNORECASE,
         ),
     ),
-    ("docs", re.compile(r"\b(doc|docs|readme|changelog)|документац", re.IGNORECASE)),
-    ("spec", re.compile(r"\b(spec|specification)|специфікац", re.IGNORECASE)),
+    (
+        "docs",
+        re.compile(r"\b(readme|changelog)\b|doc|документац", re.IGNORECASE),
+    ),
+    (
+        "spec",
+        re.compile(r"\b(spec|specification)\b|специфікац", re.IGNORECASE),
+    ),
     (
         "design",
-        re.compile(
-            r"\b(design|architecture)|дизайн|архітектур", re.IGNORECASE
-        ),
+        re.compile(r"\bdesign\b|architecture|дизайн|архітектур", re.IGNORECASE),
     ),
     (
         "research",
         re.compile(
-            r"\b(research|investigat|explore|why)|дослід|чому", re.IGNORECASE
+            r"\b(research|explore|why)\b|investigat|дослід|чому", re.IGNORECASE
         ),
     ),
     (
         "refactor",
         re.compile(
-            r"\b(refactor|rename|restructure|simplif|clean\s?up)|рефактор",
+            r"\b(refactor|rename|restructure)\b|simplif|clean\s?up|рефактор",
             re.IGNORECASE,
         ),
     ),
     (
         "chore",
         re.compile(
-            r"\b(test|ci|lint|format|bump|upgrade|dependenc)|тест",
+            r"\b(test|ci|lint|format|bump|upgrade)\b|dependenc|тест",
             re.IGNORECASE,
         ),
     ),
