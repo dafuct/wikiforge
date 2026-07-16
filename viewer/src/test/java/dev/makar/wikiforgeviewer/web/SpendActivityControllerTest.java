@@ -63,7 +63,12 @@ class SpendActivityControllerTest {
     @Test
     void should_return400_when_activitySizeTooLarge() {
         // No stub: the request must fail on the @Max(200) bound before reaching the service.
+        // The body assertion pins this to GlobalExceptionHandler#badParams specifically:
+        // it emits a problem+json body with a populated "detail", whereas Spring's default
+        // exception resolver would also produce a bare 400 with no such body — so status
+        // alone wouldn't catch the advice being deleted.
         assertThat(mvc.get().uri("/api/wikis/global/activity?size=9999"))
-                .hasStatus(HttpStatus.BAD_REQUEST);
+                .hasStatus(HttpStatus.BAD_REQUEST)
+                .bodyJson().extractingPath("$.detail").isNotNull();
     }
 }
