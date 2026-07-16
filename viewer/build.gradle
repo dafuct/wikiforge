@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'org.springframework.boot' version '4.0.3'
     id 'io.spring.dependency-management' version '1.1.7'
+    id 'com.github.node-gradle.node' version '7.1.0'
 }
 
 group = 'dev.makar'
@@ -34,4 +35,34 @@ tasks.named('test') {
 
 tasks.named('bootJar') {
     archiveFileName = 'wikiforge-viewer.jar'
+}
+
+node {
+    download = false            // use the system npm; flip to true for hermetic builds
+    nodeProjectDir = file('frontend')
+}
+
+tasks.register('npmBuildFrontend', com.github.gradle.node.npm.task.NpmTask) {
+    dependsOn tasks.named('npmInstall')
+    args = ['run', 'build']
+    inputs.dir('frontend/src')
+    inputs.files('frontend/package.json', 'frontend/vite.config.ts', 'frontend/index.html')
+    outputs.dir('frontend/dist')
+}
+
+tasks.register('copyFrontend', Copy) {
+    dependsOn tasks.named('npmBuildFrontend')
+    from 'frontend/dist'
+    into layout.buildDirectory.dir('resources/main/static')
+}
+
+tasks.named('bootJar') {
+    dependsOn tasks.named('copyFrontend')
+}
+
+// Spring Boot's resolveMainClassName scans the whole build/resources/main directory
+// (which copyFrontend also writes into, under static/) as part of bootJar's graph.
+// Gradle 9's task-validation flags that overlap unless ordering is explicit.
+tasks.named('resolveMainClassName') {
+    mustRunAfter tasks.named('copyFrontend')
 }
