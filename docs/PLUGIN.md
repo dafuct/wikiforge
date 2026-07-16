@@ -59,6 +59,18 @@ On the first session after install, a background hook runs `uv tool install` to 
 
 Every command auto-targets the wiki: a project-local `.wikiforge/` (created by `/wikiforge:init`) → `$WIKIFORGE_HOME` → `~/wiki`. The bundled **MCP server** also exposes the same capabilities as tools (search_knowledge, start_research, …) that Claude uses when you ask in natural language; see them with `/mcp`.
 
+## Viewer UI
+
+wikiforge ships a local, **read-only** web viewer (Spring Boot + React) over every wiki on your
+machine. With the plugin installed it **starts itself on session start** — open
+**http://127.0.0.1:8080**. The first session builds it once (needs `java` **and** `npm` on your
+PATH); afterwards it just launches the built jar (needs `java`). It's fully optional:
+
+- `WIKIFORGE_VIEWER_AUTOSTART=0` turns auto-start off.
+- `WIKIFORGE_VIEWER_PORT` moves it off `8080`.
+- If `java`/`npm` aren't on your (non-interactive) PATH, the hook silently does nothing — you can
+  always build and run it by hand from `viewer/` (see the README's Viewer UI section).
+
 ## Data & privacy
 
 Each project's knowledge base is a single local SQLite file under `.wikiforge/` (git-ignore it). Nothing is uploaded except the LLM/web-search calls the backend makes. Under the subscription backend, `wiki stats` shows a *notional* (API-equivalent) cost, not a real charge.
