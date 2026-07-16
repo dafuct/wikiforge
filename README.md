@@ -361,7 +361,9 @@ delays session start:
   no-ops (build the jar manually, below).
 
 Controls: `WIKIFORGE_VIEWER_AUTOSTART=0` disables it; `WIKIFORGE_VIEWER_PORT` overrides `8080`;
-launch/build output goes to `$TMPDIR/wikiforge-viewer.log`. Note that `SessionStart` hooks run in a
+launch/build output goes to `$TMPDIR/wikiforge-viewer.log` (`/tmp/wikiforge-viewer.log` when
+`TMPDIR` is unset). Auto-start is macOS/Linux only — the hook is a bash script, so on Windows it
+simply no-ops and you use the manual launch below. Note that `SessionStart` hooks run in a
 **non-interactive** shell — if your `java`/`npm` come from a version manager (sdkman, nvm) that only
 patches your interactive shell, the hook won't see them and will no-op; add them to your
 non-interactive PATH, or just launch manually:
