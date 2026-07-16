@@ -1,2 +1,175 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
+
+/* ────────────────────────────────────────────────────────────────────────
+   wikiforge viewer — "Field Almanac" theme
+   Warm paper + ink, an ochre forge accent and a pine secondary. The base
+   Tailwind neutral/blue tokens are remapped to warm equivalents so every
+   page (which styles with utility classes) inherits the palette for free.
+   ──────────────────────────────────────────────────────────────────────── */
+@theme {
+  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+  --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+
+  /* card / page surfaces (white → warm paper-white, slate → warm neutrals) */
+  --color-white: #fcf8ef;
+  --color-slate-50: #f2ebdb;
+  --color-slate-100: #eadfca;
+  --color-slate-200: #e4d7bf;
+  --color-slate-300: #d2c2a3;
+  --color-slate-400: #a89877;
+  --color-slate-500: #897a5c;
+  --color-slate-600: #6a5c44;
+  --color-slate-700: #514734;
+  --color-slate-800: #382f22;
+  --color-slate-900: #291f14;
+
+  /* primary action / links (blue → ochre forge) */
+  --color-blue-100: #f2e2c6;
+  --color-blue-500: #c98a3f;
+  --color-blue-600: #ba732f;
+  --color-blue-700: #9a591f;
+  --color-blue-800: #7c451a;
+
+  /* high confidence / success (green → sage) */
+  --color-green-100: #dde5cc;
+  --color-green-600: #5c7539;
+  --color-green-700: #4d6330;
+  --color-green-800: #435729;
+
+  /* mid confidence (amber, warmed) */
+  --color-amber-100: #f5e2bd;
+  --color-amber-800: #855619;
+
+  /* low confidence / errors (red → terracotta) */
+  --color-red-100: #f3dccb;
+  --color-red-600: #b0532f;
+  --color-red-700: #984127;
+  --color-red-800: #7f3620;
+
+  /* dev-cycle events (purple → pine) */
+  --color-purple-600: #3f8069;
+
+  /* search highlight */
+  --color-yellow-200: #f4d894;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-slate-900);
+    background-color: #f2ebdb;
+    /* layered warmth: a soft ochre dawn top-left, a faint pine settle bottom-right */
+    background-image:
+      radial-gradient(58rem 42rem at 8% -8%, #f7ead0 0%, transparent 60%),
+      radial-gradient(50rem 40rem at 108% 112%, #e9ecda 0%, transparent 58%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* faint paper grain over everything */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.4;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
+  }
+
+  #root {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Fraunces gives page + section titles an editorial, almanac character */
+  h1,
+  h2 {
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    letter-spacing: -0.012em;
+    font-weight: 540;
+  }
+
+  ::selection {
+    background: #e6b877;
+    color: #241e15;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-blue-600);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  a {
+    transition:
+      color 0.15s ease,
+      opacity 0.15s ease;
+  }
+
+  /* warm, slim scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #cbb994 transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: #cbb994;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: #b6a17c;
+    background-clip: padding-box;
+  }
+}
+
+@layer components {
+  /* a hairline that reads as pressed-in paper, not a hard line */
+  .almanac-card {
+    background: var(--color-white);
+    border: 1px solid #e4d7bf;
+    box-shadow:
+      0 1px 0 #fffdf7 inset,
+      0 1px 2px rgb(60 44 20 / 0.05),
+      0 8px 24px -18px rgb(60 44 20 / 0.35);
+  }
+}
+
+/* Markdown articles (react-markdown + typography plugin): warm ink, display
+   headings, ochre links, so the reading surface matches the shell. */
+.prose {
+  --tw-prose-body: var(--color-slate-700);
+  --tw-prose-headings: var(--color-slate-900);
+  --tw-prose-links: var(--color-blue-700);
+  --tw-prose-bold: var(--color-slate-900);
+  --tw-prose-quotes: var(--color-slate-600);
+  --tw-prose-quote-borders: #e0c99a;
+  --tw-prose-code: var(--color-slate-800);
+  --tw-prose-bullets: #cbb28a;
+  --tw-prose-hr: #e4d7bf;
+}
+.prose :where(h1, h2, h3) {
+  font-family: var(--font-display);
+  letter-spacing: -0.012em;
+}
+.prose :where(code):not(pre code) {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: #efe4cd;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}

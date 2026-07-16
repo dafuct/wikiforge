@@ -5,46 +5,86 @@ export default function HomePage() {
   const { data: wikis, isLoading, error } = useWikis()
   const rescan = useRescanWikis()
 
-  if (isLoading) return <p className="p-8 text-slate-400">Loading wikis…</p>
-  if (error) return <p className="p-8 text-red-600">Failed to load wikis: {String(error)}</p>
-
   return (
-    <div className="min-h-screen bg-slate-50 p-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">Your wikis</h1>
+    <div className="min-h-screen">
+      <div className="mx-auto max-w-4xl px-6 py-14 sm:py-20">
+        <header className="mb-10 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-slate-400">
+              read-only lens
+            </p>
+            <h1 className="mt-1 font-display text-4xl font-medium tracking-tight text-slate-900">
+              Your wikis
+            </h1>
+            <p className="mt-2 max-w-md text-sm text-slate-500">
+              Everything your knowledge bases have gathered — topics, sources, research and
+              spend — across every project on this machine.
+            </p>
+          </div>
           <button
             onClick={() => rescan.mutate()}
             disabled={rescan.isPending}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+            className="rounded-full border border-blue-700/25 bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50"
           >
-            {rescan.isPending ? 'Rescanning…' : 'Rescan'}
+            {rescan.isPending ? 'Rescanning…' : 'Rescan disk'}
           </button>
-        </div>
-        {wikis?.length === 0 && (
-          <p className="text-slate-500">
-            No wikis found. Check <code>wikiforge.viewer.scan-roots</code> in application.yml
-            or set <code>WIKIFORGE_HOME</code>.
+        </header>
+
+        {isLoading && <p className="font-mono text-sm text-slate-400">Gathering wikis…</p>}
+        {error && (
+          <p className="rounded-lg border border-red-600/20 bg-red-100/50 px-4 py-3 text-sm text-red-700">
+            Failed to load wikis: {String(error)}
           </p>
         )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+        {wikis?.length === 0 && (
+          <div className="rounded-xl border border-dashed border-slate-300 bg-white/50 px-6 py-10 text-center">
+            <p className="text-slate-600">No wikis found on this machine yet.</p>
+            <p className="mt-2 text-sm text-slate-500">
+              Point <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs">wikiforge.viewer.scan-roots</code>{' '}
+              at your projects, or set{' '}
+              <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs">WIKIFORGE_HOME</code>.
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {wikis?.map((w) => (
             <Link
               key={w.id}
               to={`/w/${w.id}`}
-              className="block rounded-lg border bg-white p-4 shadow-sm hover:shadow"
+              className="almanac-card group relative overflow-hidden rounded-xl p-5 transition duration-200 hover:-translate-y-0.5"
             >
+              <span
+                className={`absolute inset-y-0 left-0 w-1 ${
+                  w.kind === 'GLOBAL' ? 'bg-blue-600' : 'bg-slate-300'
+                }`}
+                aria-hidden="true"
+              />
               <div className="flex items-center gap-2">
-                <span className="font-semibold">{w.name}</span>
+                <h2 className="font-display text-lg font-medium text-slate-900">{w.name}</h2>
                 {w.kind === 'GLOBAL' && (
-                  <span className="rounded bg-amber-100 px-1.5 text-xs text-amber-800">GLOBAL</span>
+                  <span className="rounded-full bg-blue-600/12 px-2 py-0.5 font-mono text-[10px] font-semibold tracking-wider text-blue-700">
+                    GLOBAL
+                  </span>
                 )}
+                <span className="ml-auto translate-x-1 text-slate-300 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100">
+                  →
+                </span>
               </div>
-              <p className="mt-1 truncate text-xs text-slate-400">{w.path}</p>
-              <div className="mt-3 flex gap-4 text-sm text-slate-600">
-                <span>{w.topics} topics</span>
-                <span>${w.spendUsd.toFixed(2)} spent</span>
-                {w.lastActivityAt && <span>active {w.lastActivityAt.slice(0, 10)}</span>}
+              <p className="mt-1 truncate font-mono text-xs text-slate-400">{w.path}</p>
+              <div className="mt-4 flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
+                <span className="text-slate-600">
+                  <span className="font-mono font-medium text-slate-900">{w.topics}</span> topics
+                </span>
+                <span className="text-slate-600">
+                  <span className="font-mono font-medium text-slate-900">${w.spendUsd.toFixed(2)}</span> spent
+                </span>
+                {w.lastActivityAt && (
+                  <span className="ml-auto font-mono text-xs text-slate-400">
+                    active {w.lastActivityAt.slice(0, 10)}
+                  </span>
+                )}
               </div>
             </Link>
           ))}
