@@ -356,8 +356,9 @@ delays session start:
 - If something is already on the port, it does nothing (one shared instance serves every wiki).
 - If the jar is built and `java` is on your PATH, it launches it in the background.
 - If the jar isn't built yet, and both `java` and `npm` are on your PATH, it runs a **one-time**
-  `./gradlew bootJar` in the background; the jar appears a few minutes later and the next session
-  launches it. Missing toolchain → it silently no-ops (build the jar manually, below).
+  `./gradlew bootJar` in the background; when the build finishes a few minutes later, that same
+  background process launches the viewer — no new session needed. Missing toolchain → it silently
+  no-ops (build the jar manually, below).
 
 Controls: `WIKIFORGE_VIEWER_AUTOSTART=0` disables it; `WIKIFORGE_VIEWER_PORT` overrides `8080`;
 launch/build output goes to `$TMPDIR/wikiforge-viewer.log`. Note that `SessionStart` hooks run in a
