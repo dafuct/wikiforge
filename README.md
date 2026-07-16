@@ -34,6 +34,11 @@ At install you choose the LLM backend (`subscription` or `api`); the first sessi
 /wikiforge:query "..."      # cited answers
 ```
 
+The **Viewer UI** starts itself in the background on session start — a local, read-only web view
+over every wiki on your machine. Open **http://127.0.0.1:8080** once a session has begun (the very
+first run builds it once — see [Viewer UI](#viewer-ui-viewer)). Needs `java` on your PATH (`java`
++ `npm` for that first build); it silently does nothing if they're absent.
+
 Requires [`uv`](https://docs.astral.sh/uv/) plus either a logged-in `claude` CLI (subscription) or an `ANTHROPIC_API_KEY` (API backend). Full setup, commands, and caveats: **[docs/PLUGIN.md](docs/PLUGIN.md)**.
 
 The rest of this README covers running wikiforge **from source** as a standalone CLI + MCP server.
@@ -343,6 +348,22 @@ These are deliberate scoping decisions, not oversights:
 A local, strictly read-only Spring Boot 4 + React web UI over every wikiforge database on the
 machine — the global wiki (`$WIKIFORGE_HOME`, default `~/wiki`) plus any project-local
 `.wikiforge/wiki.db` found under the configured scan roots (default `~/dev`, depth 3).
+
+**Auto-start.** Installed as a Claude Code plugin, a `SessionStart` hook
+(`hooks/viewer-autostart.sh`) brings the viewer up for you — idempotent and non-blocking, it never
+delays session start:
+
+- If something is already on the port, it does nothing (one shared instance serves every wiki).
+- If the jar is built and `java` is on your PATH, it launches it in the background.
+- If the jar isn't built yet, and both `java` and `npm` are on your PATH, it runs a **one-time**
+  `./gradlew bootJar` in the background; the jar appears a few minutes later and the next session
+  launches it. Missing toolchain → it silently no-ops (build the jar manually, below).
+
+Controls: `WIKIFORGE_VIEWER_AUTOSTART=0` disables it; `WIKIFORGE_VIEWER_PORT` overrides `8080`;
+launch/build output goes to `$TMPDIR/wikiforge-viewer.log`. Note that `SessionStart` hooks run in a
+**non-interactive** shell — if your `java`/`npm` come from a version manager (sdkman, nvm) that only
+patches your interactive shell, the hook won't see them and will no-op; add them to your
+non-interactive PATH, or just launch manually:
 
 ```bash
 cd viewer && ./gradlew bootJar && java -jar build/libs/wikiforge-viewer.jar
