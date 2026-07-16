@@ -18,6 +18,9 @@ _scratch_demo/
 *.db-wal
 *.db-shm
 
+# wikiforge local knowledge base (config + SQLite db + topics — not committed)
+.wikiforge/
+
 # SDD working scratch (task briefs, reports, review diffs)
 .superpowers/
 
