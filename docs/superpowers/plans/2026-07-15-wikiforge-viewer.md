@@ -5310,6 +5310,23 @@ function hitLink(wikiId: string, hit: SearchHit): string {
     : `/w/${wikiId}/sources/${hit.linkSlug}`
 }
 
+// Render the FTS5 snippet WITHOUT dangerouslySetInnerHTML. SQLite's snippet()
+// injects <mark> around matches but does NOT escape the surrounding chunk text —
+// and that text is whatever was ingested (a scraped page's body can contain
+// markup). Splitting on the markers and returning text nodes lets React escape
+// everything; any markup in the source shows as visible text, which is correct.
+function Snippet({ html }: { html: string }) {
+  return (
+    <p className="mt-1 text-slate-600">
+      {html.split(/<mark>|<\/mark>/).map((part, i) =>
+        i % 2 === 1
+          ? <mark key={i} className="bg-yellow-200">{part}</mark>
+          : <span key={i}>{part}</span>,
+      )}
+    </p>
+  )
+}
+
 export default function SearchPage() {
   const { wikiId } = useParams() as { wikiId: string }
   const [input, setInput] = useState('')
@@ -5326,9 +5343,7 @@ export default function SearchPage() {
         {items.map((h, i) => (
           <li key={i} className="rounded border p-2">
             <Link to={hitLink(wikiId, h)} className="font-medium text-blue-700">{h.title}</Link>
-            {/* snippet comes from our own FTS5 snippet() with only <mark> tags */}
-            <p className="mt-1 text-slate-600 [&_mark]:bg-yellow-200"
-               dangerouslySetInnerHTML={{ __html: h.snippet }} />
+            <Snippet html={h.snippet} />
           </li>
         ))}
         {items.length === 0 && <li className="text-slate-400">nothing</li>}
@@ -5364,7 +5379,7 @@ export default function SearchPage() {
 }
 ```
 
-Security note (why `dangerouslySetInnerHTML` is acceptable here): the snippet string is produced by our own backend `snippet()` call, which inserts only literal `<mark>`/`</mark>` markers; FTS5 escapes nothing else — chunk text itself is stored as plain text and rendered as-is inside the snippet. Wiki content is the user's own local data, and the viewer binds to localhost. If this ever becomes multi-user, sanitize server-side first.
+Security note: an earlier draft of this plan used `dangerouslySetInnerHTML` here, reasoning that the snippet comes from our own `snippet()` call and so contains only `<mark>` markers. **That reasoning was wrong** and Task 14's implementer caught it: `snippet()` injects `<mark>` around matches but does not escape the surrounding chunk text, and that text is whatever was ingested — a scraped page's extracted body can legitimately contain markup. Rendering it as raw HTML is an injection vector even for a localhost single-user tool, because the "attacker" is any page the user chose to ingest. The `Snippet` component above splits on the markers and returns text nodes, so React escapes the content; markup in a source renders as visible text, which is the correct outcome. Known cosmetic edge case: source text containing a literal `<mark>` string would produce spurious highlighting — wrong highlight, never executed markup.
 
 In `App.tsx`: import and wire `<SearchPage />`.
 
