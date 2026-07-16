@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import ForceGraph2D from 'react-force-graph-2d'
 import { useGraph } from '../api/hooks'
@@ -10,22 +10,30 @@ export default function GraphPage() {
   const navigate = useNavigate()
   const { data, isLoading, error } = useGraph(wikiId)
 
-  // react-force-graph-2d's underlying canvas does not auto-size to its parent —
-  // without an explicit width/height it renders a 0x0 canvas (verified against the
-  // installed v1.29.1 in a real browser: canvas.width/height stayed 0 even with data
-  // present). Measure the wrapping container and pass its size explicitly.
-  const containerRef = useRef<HTMLDivElement>(null)
+  // react-force-graph-2d's canvas does not auto-size to its parent — without an
+  // explicit width/height it renders 0x0 (verified against v1.29.1 in a real
+  // browser). So measure the container and pass its size explicitly.
+  //
+  // This MUST be a callback ref, not useRef + useEffect([]): the container only
+  // mounts after the isLoading/error gates below return, so an effect with empty
+  // deps runs while the ref is still null and never re-attaches — leaving a
+  // permanently 0x0 canvas on any cold load. A callback ref fires whenever the
+  // node actually mounts, regardless of render order.
   const [size, setSize] = useState({ width: 0, height: 0 })
+  const observerRef = useRef<ResizeObserver | null>(null)
 
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
+  const containerRef = useCallback((el: HTMLDivElement | null) => {
+    observerRef.current?.disconnect()
+    if (!el) {
+      observerRef.current = null
+      return
+    }
     const observer = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect
       setSize({ width, height })
     })
     observer.observe(el)
-    return () => observer.disconnect()
+    observerRef.current = observer
   }, [])
 
   const graphData = useMemo(() => {
