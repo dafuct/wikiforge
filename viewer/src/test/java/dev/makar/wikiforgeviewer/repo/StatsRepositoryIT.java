@@ -40,4 +40,26 @@ class StatsRepositoryIT {
                 .containsExactly(3, 8);
         ds.close();
     }
+
+    @Test
+    void should_countCurrentArticleOncePerTopic_when_twoArticlesShareMaxVersion() throws Exception {
+        // Same rss shape: two articles at topic 1's max version. The confidence
+        // histogram must count the topic's CURRENT article once, not both.
+        Path db = WikiDbFixture.createWikiDb(tmp);
+        WikiDbFixture.seed(db, WikiDbFixture.STANDARD_SEED);
+        WikiDbFixture.seed(db,
+                "INSERT INTO articles (id, topic_id, slug, title, body_md, path, confidence, "
+                    + "compile_digest, version, created_at) "
+                    + "VALUES (13, 1, 'rust-async', 'Rust Async', '# newer compile', 'rust-async.md', "
+                    + "0.90, 'd3', 2, '2026-07-01 12:00:00')");
+        var ds = ReadOnlySqliteDataSources.open(db);
+
+        WikiStats stats = repository.stats(JdbcClient.create(ds));
+
+        // topic 1 current = 0.90 (bucket 9), topic 2 = 0.30 (bucket 3); each counted once
+        assertThat(stats.confidence())
+                .containsExactly(new WikiStats.ConfidenceBucket(3, 1),
+                        new WikiStats.ConfidenceBucket(9, 1));
+        ds.close();
+    }
 }

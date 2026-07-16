@@ -16,9 +16,9 @@ public class GraphRepository {
                 FROM topics t
                 LEFT JOIN (%s) lv
                   ON lv.topic_id = t.id
-                LEFT JOIN articles a ON a.topic_id = t.id AND a.version = lv.v
+                LEFT JOIN articles a ON a.id = lv.article_id
                 ORDER BY t.slug
-                """.formatted(SqlFragments.LATEST_ARTICLE_VERSIONS))
+                """.formatted(SqlFragments.CURRENT_ARTICLE))
                 .query((rs, i) -> new GraphResponse.Node(
                         rs.getString("slug"), rs.getString("title"),
                         rs.getObject("confidence") == null ? null : rs.getDouble("confidence")))

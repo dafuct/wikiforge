@@ -93,4 +93,40 @@ class TopicRepositoryIT {
     void should_returnSpecificVersion_when_articleIdGiven() {
         assertThat(repository.article(client, 10L).bodyMd()).isEqualTo("# Old body");
     }
+
+    // Real-world shape seen in the rss wiki: the same topic was compiled twice at the
+    // SAME version, so two article rows share MAX(version) (the schema has no
+    // UNIQUE(topic_id, version)). The "current article" must still resolve to exactly
+    // one row (the newest), or the topic fans out — duplicating the list row and making
+    // detail()'s .optional() throw IncorrectResultSizeDataAccessException (a raw 500).
+    private void seedDuplicateArticleAtMaxVersion() throws Exception {
+        WikiDbFixture.seed(tmp.resolve("wiki.db"),
+                "INSERT INTO articles (id, topic_id, slug, title, body_md, path, confidence, "
+                    + "compile_digest, version, created_at) "
+                    + "VALUES (13, 1, 'rust-async', 'Rust Async', '# newer compile', 'rust-async.md', "
+                    + "0.90, 'd3', 2, '2026-07-01 12:00:00')");
+    }
+
+    @Test
+    void should_listTopicOnce_when_twoArticlesShareMaxVersion() throws Exception {
+        seedDuplicateArticleAtMaxVersion();
+
+        List<TopicRow> rows = repository.list(client, null, "title");
+
+        assertThat(rows).hasSize(2);  // rust-async appears once, not twice
+        TopicRow rust = rows.stream().filter(r -> "rust-async".equals(r.slug()))
+                .findFirst().orElseThrow();
+        assertThat(rust.confidence()).isEqualTo(0.90);  // the newer of the two v2 articles
+    }
+
+    @Test
+    void should_returnNewestArticleWithoutThrowing_when_twoArticlesShareMaxVersion() throws Exception {
+        seedDuplicateArticleAtMaxVersion();
+
+        TopicDetail detail = repository.detail(client, "rust-async");  // must not throw
+
+        assertThat(detail.article()).isNotNull();
+        assertThat(detail.article().id()).isEqualTo(13L);
+        assertThat(detail.article().confidence()).isEqualTo(0.90);
+    }
 }
