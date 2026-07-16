@@ -12,11 +12,11 @@ public class StatsRepository {
         List<WikiStats.ConfidenceBucket> buckets = client.sql("""
                 SELECT MIN(CAST(a.confidence * 10 AS INTEGER), 9) AS bucket, COUNT(*) AS n
                 FROM articles a
-                JOIN (SELECT topic_id, MAX(version) AS v FROM articles GROUP BY topic_id) latest
+                JOIN (%s) latest
                   ON latest.topic_id = a.topic_id AND latest.v = a.version
                 GROUP BY bucket
                 ORDER BY bucket
-                """)
+                """.formatted(SqlFragments.LATEST_ARTICLE_VERSIONS))
                 .query((rs, i) -> new WikiStats.ConfidenceBucket(rs.getInt("bucket"), rs.getLong("n")))
                 .list();
 

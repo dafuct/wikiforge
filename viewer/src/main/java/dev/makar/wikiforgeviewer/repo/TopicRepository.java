@@ -27,10 +27,10 @@ public class TopicRepository {
                                                         '+' || t.stale_after_days || ' days')
                         THEN 1 ELSE 0 END AS stale
             FROM topics t
-            LEFT JOIN (SELECT topic_id, MAX(version) AS v FROM articles GROUP BY topic_id) lv
+            LEFT JOIN (%s) lv
               ON lv.topic_id = t.id
             LEFT JOIN articles a ON a.topic_id = t.id AND a.version = lv.v
-            """;
+            """.formatted(SqlFragments.LATEST_ARTICLE_VERSIONS);
 
     private static final RowMapper<TopicRow> TOPIC_ROW = (rs, i) -> new TopicRow(
             rs.getLong("id"), rs.getString("slug"), rs.getString("title"),

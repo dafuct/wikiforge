@@ -14,11 +14,11 @@ public class GraphRepository {
         List<GraphResponse.Node> nodes = client.sql("""
                 SELECT t.slug, t.title, a.confidence
                 FROM topics t
-                LEFT JOIN (SELECT topic_id, MAX(version) AS v FROM articles GROUP BY topic_id) lv
+                LEFT JOIN (%s) lv
                   ON lv.topic_id = t.id
                 LEFT JOIN articles a ON a.topic_id = t.id AND a.version = lv.v
                 ORDER BY t.slug
-                """)
+                """.formatted(SqlFragments.LATEST_ARTICLE_VERSIONS))
                 .query((rs, i) -> new GraphResponse.Node(
                         rs.getString("slug"), rs.getString("title"),
                         rs.getObject("confidence") == null ? null : rs.getDouble("confidence")))
