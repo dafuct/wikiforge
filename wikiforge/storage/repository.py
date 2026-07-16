@@ -559,7 +559,12 @@ class Repository:
         )
 
     async def insert_article(self, article: Article) -> int:
-        """Insert a new (versioned) compiled article and return its id."""
+        """Insert a compiled article at the caller-supplied ``article.version``; return its id.
+
+        For the compile path use :meth:`insert_next_article_version` instead — it assigns the
+        version atomically so concurrent compiles can't collide. This variant keeps an
+        explicit version for callers that set one deliberately (test fixtures, history).
+        """
         async with self._db.lock:
             row = await self._q.insert_article(
                 self._db.conn,
@@ -574,6 +579,26 @@ class Repository:
             )
             await self._db.conn.commit()
         return int(row["id"])
+
+    async def insert_next_article_version(self, article: Article) -> Article:
+        """Insert a compiled article, assigning ``version = MAX(version)+1`` for the topic
+        atomically inside the write lock, and return the article with ``id`` and ``version``
+        populated. ``article.version`` is ignored — the database decides, so two overlapping
+        compiles get distinct versions instead of both writing the same one.
+        """
+        async with self._db.lock:
+            row = await self._q.insert_article_next_version(
+                self._db.conn,
+                topic_id=article.topic_id,
+                slug=article.slug,
+                title=article.title,
+                body_md=article.body_md,
+                path=article.path,
+                confidence=article.confidence,
+                compile_digest=article.compile_digest,
+            )
+            await self._db.conn.commit()
+        return article.model_copy(update={"id": int(row["id"]), "version": int(row["version"])})
 
     async def insert_citation(
         self, article_id: int, claim_text: str, raw_source_id: int, quote: str | None

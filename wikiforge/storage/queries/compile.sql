@@ -23,6 +23,17 @@ INSERT INTO articles (topic_id, slug, title, body_md, path, confidence, compile_
 VALUES (:topic_id, :slug, :title, :body_md, :path, :confidence, :compile_digest, :version)
 RETURNING id;
 
+-- name: insert_article_next_version^
+-- Assign version = MAX(version)+1 for the topic INSIDE the insert, so two concurrent
+-- compiles (which each read the pre-insert state lock-free) can't both land the same
+-- version. SQLite serializes writers, so the second insert's subquery sees the first's
+-- committed row. Used by the compile path; the plain insert_article keeps an explicit
+-- version for callers that set it deliberately (fixtures, history reconstruction).
+INSERT INTO articles (topic_id, slug, title, body_md, path, confidence, compile_digest, version)
+VALUES (:topic_id, :slug, :title, :body_md, :path, :confidence, :compile_digest,
+        COALESCE((SELECT MAX(version) FROM articles WHERE topic_id = :topic_id), 0) + 1)
+RETURNING id, version;
+
 -- name: insert_citation!
 INSERT INTO citations (article_id, claim_text, raw_source_id, quote)
 VALUES (:article_id, :claim_text, :raw_source_id, :quote);
