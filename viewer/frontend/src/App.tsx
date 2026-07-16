@@ -4,6 +4,8 @@ import HomePage from './pages/HomePage'
 import DashboardPage from './pages/DashboardPage'
 import TopicsPage from './pages/TopicsPage'
 import TopicDetailPage from './pages/TopicDetailPage'
+import SourcesPage from './pages/SourcesPage'
+import SourceDetailPage from './pages/SourceDetailPage'
 
 const Todo = ({ name }: { name: string }) => <div className="text-slate-400">{name} — coming in a later task</div>
 
@@ -15,8 +17,8 @@ export default function App() {
         <Route index element={<DashboardPage />} />
         <Route path="topics" element={<TopicsPage />} />
         <Route path="topics/:slug" element={<TopicDetailPage />} />
-        <Route path="sources" element={<Todo name="Sources" />} />
-        <Route path="sources/:sourceId" element={<Todo name="SourceDetail" />} />
+        <Route path="sources" element={<SourcesPage />} />
+        <Route path="sources/:sourceId" element={<SourceDetailPage />} />
         <Route path="research" element={<Todo name="Research" />} />
         <Route path="research/:sessionId" element={<Todo name="ResearchDetail" />} />
         <Route path="spend" element={<Todo name="Spend" />} />
