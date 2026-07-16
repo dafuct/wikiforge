@@ -8,9 +8,9 @@ const GROUPS = ['model', 'purpose', 'day'] as const
 export default function SpendPage() {
   const { wikiId } = useParams() as { wikiId: string }
   const [group, setGroup] = useState<(typeof GROUPS)[number]>('model')
-  const { data: spend, error } = useSpend(wikiId, group)
-  const { data: activity } = useActivity(wikiId, 0)
-  const { data: devlog } = useDevlog(wikiId, 0)
+  const { data: spend, isLoading: spendLoading, error } = useSpend(wikiId, group)
+  const { data: activity, isLoading: activityLoading, isError: activityError } = useActivity(wikiId, 0)
+  const { data: devlog, isLoading: devlogLoading, isError: devlogError } = useDevlog(wikiId, 0)
 
   if (error) return <p className="text-red-600">{String(error)}</p>
 
@@ -31,14 +31,21 @@ export default function SpendPage() {
           </div>
         </div>
         <div style={{ height: 240 }}>
-          <ResponsiveContainer>
-            <BarChart data={spend ?? []}>
-              <XAxis dataKey="key" tick={{ fontSize: 11 }} />
-              <YAxis tickFormatter={(v: number) => `$${v}`} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v) => `$${Number(v).toFixed(4)}`} />
-              <Bar dataKey="costUsd" fill="#2563eb" radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          {spendLoading && !spend ? (
+            <p className="text-slate-400"
+               style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              Loading…
+            </p>
+          ) : (
+            <ResponsiveContainer>
+              <BarChart data={spend ?? []}>
+                <XAxis dataKey="key" tick={{ fontSize: 11 }} />
+                <YAxis tickFormatter={(v: number) => `$${v}`} tick={{ fontSize: 11 }} />
+                <Tooltip formatter={(v) => `$${Number(v).toFixed(4)}`} />
+                <Bar dataKey="costUsd" fill="#2563eb" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
         <table className="mt-3 w-full text-sm">
           <thead className="text-left text-xs uppercase text-slate-400">
@@ -72,7 +79,9 @@ export default function SpendPage() {
                 {e.title}
               </li>
             ))}
-            {devlog?.items.length === 0 && <li className="py-2 text-slate-400">empty</li>}
+            {devlogLoading && <li className="py-2 text-slate-400">Loading…</li>}
+            {devlogError && <li className="py-2 text-red-600">Failed to load</li>}
+            {devlog && devlog.items.length === 0 && <li className="py-2 text-slate-400">empty</li>}
           </ul>
         </section>
 
@@ -86,7 +95,9 @@ export default function SpendPage() {
                 {a.summary}
               </li>
             ))}
-            {activity?.items.length === 0 && <li className="py-2 text-slate-400">empty</li>}
+            {activityLoading && <li className="py-2 text-slate-400">Loading…</li>}
+            {activityError && <li className="py-2 text-red-600">Failed to load</li>}
+            {activity && activity.items.length === 0 && <li className="py-2 text-slate-400">empty</li>}
           </ul>
         </section>
       </div>
