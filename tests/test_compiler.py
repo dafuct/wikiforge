@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -171,3 +172,38 @@ async def test_incremental_skip_and_force(env) -> None:
     # force -> recompiles
     third = await compiler.compile_topic(topic, force=True)
     assert third is not None and llm.calls == 2
+
+
+async def test_concurrent_compiles_get_distinct_versions(env) -> None:
+    """Two compiles of the same topic that both read `latest` before either inserts must
+    still get distinct versions. Version was computed lock-free in Python (latest+1), so
+    two overlapping compiles both saw latest=None and wrote version 1 — the exact
+    duplicate found in a real wiki (rss). The version must be assigned atomically at the
+    INSERT instead, inside the write lock, so the second sees the first's committed row.
+    """
+    cfg, repo, tid, home = env
+
+    # A 2-party barrier inside the LLM call holds both compiles at synthesis — a point
+    # they only reach AFTER reading `latest` — so both observe the same (empty) state
+    # before either inserts, deterministically reproducing the race.
+    barrier = asyncio.Barrier(2)
+
+    class BarrierLLM(FakeLLM):
+        async def parse(self, *args, **kwargs):
+            await barrier.wait()
+            return await super().parse(*args, **kwargs)
+
+    compiler = Compiler(BarrierLLM(), FakeEmbedder(), repo, cfg, home)
+    topic = await repo.get_topic("topic")
+
+    first, second = await asyncio.gather(
+        compiler.compile_topic(topic, force=True),
+        compiler.compile_topic(topic, force=True),
+    )
+
+    assert first is not None and second is not None
+    assert sorted([first.version, second.version]) == [1, 2]  # not [1, 1]
+    rows = await repo._db.fetchall(
+        "SELECT version FROM articles WHERE topic_id = ? ORDER BY version", (tid,)
+    )
+    assert [r["version"] for r in rows] == [1, 2]

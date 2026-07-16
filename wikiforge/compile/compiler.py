@@ -76,7 +76,6 @@ class Compiler:
         )
         path = self._write_markdown(topic.slug, markdown)
 
-        version = 1 if latest is None else latest.version + 1
         article = Article(
             topic_id=topic.id,
             slug=topic.slug,
@@ -85,9 +84,14 @@ class Compiler:
             path=str(path.relative_to(self._home)),
             confidence=confidence,
             compile_digest=digest,
-            version=version,
+            version=0,  # assigned atomically by insert_next_article_version (see below)
         )
-        article_id = await self._repo.insert_article(article)
+        # Assign the version at the INSERT, not from the `latest` read above: that read is
+        # lock-free and a concurrent compile could share it, so both would pick the same
+        # version (observed as duplicate v1 articles in a real wiki).
+        saved = await self._repo.insert_next_article_version(article)
+        article_id = saved.id
+        assert article_id is not None
         await self._store_citations_and_conflicts(topic.id, article_id, sources, compiled)
         await index_owner(
             self._repo, self._embedder, owner_type="article", owner_id=article_id, text=markdown
@@ -102,7 +106,7 @@ class Compiler:
         await refresh_topic_links(self._repo, topic.id)
 
         await self._repo.set_topic_compiled(topic.id, datetime.now(UTC).isoformat())
-        return article.model_copy(update={"id": article_id})
+        return saved
 
     async def _synthesize(
         self, topic: Topic, sources: list[RawSource], feedback: list[Feedback]
