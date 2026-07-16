@@ -29,8 +29,8 @@ public class TopicRepository {
             FROM topics t
             LEFT JOIN (%s) lv
               ON lv.topic_id = t.id
-            LEFT JOIN articles a ON a.topic_id = t.id AND a.version = lv.v
-            """.formatted(SqlFragments.LATEST_ARTICLE_VERSIONS);
+            LEFT JOIN articles a ON a.id = lv.article_id
+            """.formatted(SqlFragments.CURRENT_ARTICLE);
 
     private static final RowMapper<TopicRow> TOPIC_ROW = (rs, i) -> new TopicRow(
             rs.getLong("id"), rs.getString("slug"), rs.getString("title"),
@@ -64,7 +64,7 @@ public class TopicRepository {
 
         ArticleView article = client.sql("""
                 SELECT id, title, body_md, confidence, version, created_at
-                FROM articles WHERE topic_id = :tid ORDER BY version DESC LIMIT 1
+                FROM articles WHERE topic_id = :tid ORDER BY version DESC, id DESC LIMIT 1
                 """)
                 .param("tid", topic.id())
                 .query(ARTICLE).optional().orElse(null);
