@@ -4378,8 +4378,10 @@ export default function HomePage() {
             >
               <div className="flex items-center gap-2">
                 <span className="font-semibold">{w.name}</span>
+                {/* Uppercase: the global wiki is also NAMED "global", and a lowercase
+                    badge makes the test's getByText('global') match two elements. */}
                 {w.kind === 'GLOBAL' && (
-                  <span className="rounded bg-amber-100 px-1.5 text-xs text-amber-800">global</span>
+                  <span className="rounded bg-amber-100 px-1.5 text-xs text-amber-800">GLOBAL</span>
                 )}
               </div>
               <p className="mt-1 truncate text-xs text-slate-400">{w.path}</p>
