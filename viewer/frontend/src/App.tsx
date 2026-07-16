@@ -1,6 +1,8 @@
 import { Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import HomePage from './pages/HomePage'
+import DashboardPage from './pages/DashboardPage'
+import TopicsPage from './pages/TopicsPage'
 
 const Todo = ({ name }: { name: string }) => <div className="text-slate-400">{name} — coming in a later task</div>
 
@@ -9,8 +11,8 @@ export default function App() {
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/w/:wikiId" element={<Layout />}>
-        <Route index element={<Todo name="Dashboard" />} />
-        <Route path="topics" element={<Todo name="Topics" />} />
+        <Route index element={<DashboardPage />} />
+        <Route path="topics" element={<TopicsPage />} />
         <Route path="topics/:slug" element={<Todo name="TopicDetail" />} />
         <Route path="sources" element={<Todo name="Sources" />} />
         <Route path="sources/:sourceId" element={<Todo name="SourceDetail" />} />
