@@ -5252,7 +5252,7 @@ git commit -m "feat(viewer): spend charts with devlog and activity feeds"
 `viewer/frontend/src/pages/GraphPage.tsx`:
 
 ```tsx
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import ForceGraph2D from 'react-force-graph-2d'
 import { useGraph } from '../api/hooks'
@@ -5263,6 +5263,24 @@ export default function GraphPage() {
   const { wikiId } = useParams() as { wikiId: string }
   const navigate = useNavigate()
   const { data, isLoading, error } = useGraph(wikiId)
+
+  // react-force-graph-2d's underlying canvas does not auto-size to its parent —
+  // without an explicit width/height it renders a 0x0 canvas (verified against the
+  // installed v1.29.1 in a real browser: canvas.width/height stayed 0 even with data
+  // present). Measure the wrapping container and pass its size explicitly.
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [size, setSize] = useState({ width: 0, height: 0 })
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      setSize({ width, height })
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   const graphData = useMemo(() => {
     if (!data) return { nodes: [] as FgNode[], links: [] }
@@ -5285,9 +5303,11 @@ export default function GraphPage() {
       <h1 className="border-b p-3 font-semibold">
         Topic graph — {graphData.nodes.length} topics, {graphData.links.length} links
       </h1>
-      <div style={{ height: '70vh' }}>
+      <div ref={containerRef} style={{ height: '70vh' }}>
         <ForceGraph2D
           graphData={graphData}
+          width={size.width}
+          height={size.height}
           nodeLabel="name"
           linkColor={() => '#cbd5e1'}
           onNodeClick={(node) => navigate(`/w/${wikiId}/topics/${(node as FgNode).id}`)}
