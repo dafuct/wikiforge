@@ -126,8 +126,10 @@ class SpendActivityRepositoryIT {
             walked.addAll(repository.devlog(client, p, 1).items());
         }
 
-        // Walking one row per page must reproduce the single-page order exactly:
-        // every row surfaces once, none twice, none skipped.
+        // Walking one row per page must reproduce the single-page order exactly.
+        // What this adds over the single-page assertion is the OFFSET arithmetic
+        // across all six pages; it cannot fail independently of that assertion,
+        // since both run the same ORDER BY over unchanged data.
         assertThat(walked).extracting(DevlogEntry::kind, DevlogEntry::refId)
                 .containsExactlyElementsOf(expected);
     }
