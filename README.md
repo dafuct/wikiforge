@@ -335,3 +335,25 @@ These are deliberate scoping decisions, not oversights:
 - MCP `streamable-http` transport (stdio only for now).
 - A second `LLMProvider` implementation beyond Anthropic.
 - Multiple wikis per process.
+
+---
+
+## Viewer UI (`viewer/`)
+
+A local, strictly read-only Spring Boot 4 + React web UI over every wikiforge database on the
+machine — the global wiki (`$WIKIFORGE_HOME`, default `~/wiki`) plus any project-local
+`.wikiforge/wiki.db` found under the configured scan roots (default `~/dev`, depth 3).
+
+```bash
+cd viewer && ./gradlew bootJar && java -jar build/libs/wikiforge-viewer.jar
+# open http://127.0.0.1:8080
+```
+
+Dev mode: `./gradlew bootRun` + `cd frontend && npm run dev` (Vite proxies `/api` to :8080).
+
+Views per wiki: dashboard (counts, confidence distribution, staleness), topics & articles with
+citations/conflicts/related, raw sources with provenance and cited-by, research sessions with
+persona findings and thesis verdicts, LLM spend charts, the dev-cycle log, the topic graph, and
+FTS5 search. The viewer opens SQLite strictly read-only (WAL readers don't block writers) and
+never migrates the schema — `wikiforge/storage/schema.sql` stays Python-owned. The copy at
+`viewer/src/test/resources/schema-test.sql` must be re-trimmed when the Python schema changes.
