@@ -39,7 +39,7 @@ over every wiki on your machine. Open **http://127.0.0.1:8080** once a session h
 first run builds it once — see [Viewer UI](#viewer-ui-viewer)). Needs `java` on your PATH (`java`
 + `npm` for that first build); it silently does nothing if they're absent.
 
-Requires [`uv`](https://docs.astral.sh/uv/) plus either a logged-in `claude` CLI (subscription) or an `ANTHROPIC_API_KEY` (API backend). Full setup, commands, and caveats: **[docs/PLUGIN.md](docs/PLUGIN.md)**.
+Requires [`uv`](https://docs.astral.sh/uv/) plus either a logged-in `claude` CLI (subscription) or an `ANTHROPIC_API_KEY` (API backend). Full setup, commands, and caveats: **[docs/PLUGIN.md](docs/PLUGIN.md)**. An end-to-end walkthrough — the canonical loop, worked scenarios (including a wiki *inside* a code repo), and every command with its token cost: **[docs/GUIDE-en.md](docs/GUIDE-en.md)**.
 
 The rest of this README covers running wikiforge **from source** as a standalone CLI + MCP server.
 
