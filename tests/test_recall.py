@@ -168,3 +168,40 @@ async def test_recall_without_session_id_skips_dedup() -> None:
     out = await recall_excerpts(repo, retriever, _CountingEmbedder(), _Cfg(),
                                 "why the deadlock in the bridge?", session_id=None)
     assert "deadlock" in out                                 # dedup gracefully skipped
+
+
+async def test_recall_seen_chunk_does_not_consume_a_slot() -> None:
+    """Regression test: dedup must run before max_excerpts cap.
+
+    With 4 candidates (all above gate), highest similarity is seen.
+    If cap runs before dedup: seen chunk occupies a slot, dropping lowest unseen.
+    If dedup runs before cap (correct): all 3 unseen chunks are kept.
+    """
+    class _Cfg3:
+        recall = RecallConfig(max_excerpts=3)
+
+    targets = [
+        _target("we hit a deadlock in the bridge", 1, seq=0),  # seen, highest sim
+        _target("deadlock retry strategy chosen", 2, seq=1),   # unseen, 0.99
+        _target("bridge initialization code", 3, seq=2),       # unseen, 0.98
+        _target("fallback error handler", 4, seq=3),           # unseen, 0.97
+    ]
+    repo = _DedupRepo(
+        {
+            1: [1.0, 0.0, 0.0, 0.0],      # seen, highest sim
+            2: [0.99, 0.141, 0.0, 0.0],   # unseen_1
+            3: [0.98, 0.199, 0.0, 0.0],   # unseen_2
+            4: [0.97, 0.243, 0.0, 0.0],   # unseen_3, lowest unseen
+        },
+        seen={("raw_source", 5, 0)}  # mark target 1 (seq=0) as already seen
+    )
+    out = await recall_excerpts(repo, _StubRetriever(targets), _CountingEmbedder(), _Cfg3(),
+                                "why the deadlock in the bridge?", session_id="s1")
+    # All three unseen chunks should be in output
+    assert "deadlock retry strategy" in out
+    assert "bridge initialization" in out
+    assert "fallback error handler" in out
+    # Seen chunk should NOT be in output
+    assert "we hit a deadlock in the bridge" not in out
+    # Only the 3 unseen chunks should be logged
+    assert repo.logged == [("raw_source", 5, 1), ("raw_source", 5, 2), ("raw_source", 5, 3)]
