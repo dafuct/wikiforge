@@ -22,3 +22,10 @@ WHERE c.owner_type = :owner_type
   AND c.rowid NOT IN (SELECT rowid FROM chunks_vec)
 ORDER BY c.rowid
 LIMIT :limit;
+
+-- name: chunks_missing_vectors_all
+SELECT c.rowid AS rowid, c.text AS text
+FROM chunks c
+WHERE c.rowid NOT IN (SELECT rowid FROM chunks_vec)
+ORDER BY c.rowid
+LIMIT :limit;

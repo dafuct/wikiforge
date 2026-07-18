@@ -20,7 +20,7 @@ from wikiforge.config.settings import (
     load_config,
     write_default_config,
 )
-from wikiforge.embed.factory import effective_embedding_dim
+from wikiforge.embed.factory import build_embedding_provider, effective_embedding_dim
 from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.ingest import sources as ingest_sources
 from wikiforge.lint.auditor import AuditFinding, WikiAuditor
@@ -71,6 +71,59 @@ async def init_wiki(name: str, home: Path) -> Path:
     finally:
         await db.close()
     return home
+
+
+async def ensure_embedding_compat(repo: Repository, embedder: EmbeddingProvider) -> None:
+    """Stamp or verify the wiki's embedding model; mismatch demands a reindex.
+
+    The first caller records ``embedding_model`` in wiki meta. Afterwards a
+    different active model raises instead of silently fusing incompatible
+    vectors with FTS results.
+    """
+    stored = await repo.get_meta("embedding_model")
+    if stored is None:
+        await repo.set_meta("embedding_model", embedder.model)
+        return
+    if stored != embedder.model:
+        raise ValueError(
+            f"this wiki's chunk vectors were built with embedding model {stored!r}, but the "
+            f"active model is {embedder.model!r}; run `wiki reindex --embeddings` to rebuild."
+        )
+
+
+async def run_reindex(home: Path) -> int:
+    """Rebuild every chunk vector with the active embedding provider (zero LLM).
+
+    Recreates the vec0 table at the active dimension, re-embeds all chunks in
+    batches of 500, restamps the meta keys, and purges stale embedding-cache
+    rows. Returns the number of chunks embedded.
+    """
+    from wikiforge.activity.cost import CostTracker
+
+    cfg = load_config(home)
+    dim = effective_embedding_dim(cfg)
+    db = await Database.open(home, dim=dim)
+    try:
+        repo = Repository(db)
+        embedder = build_embedding_provider(cfg, repo, cost_tracker=CostTracker(repo, cfg))
+        await db.recreate_vec_table()
+        embedded = 0
+        while True:
+            rows = await repo.all_chunks_missing_vectors(limit=500)
+            if not rows:
+                break
+            vectors = await embedder.embed([text for _, text in rows])
+            for (rowid, _), vector in zip(rows, vectors, strict=True):
+                await repo.insert_chunk_vector(rowid, vector)
+            embedded += len(rows)
+        await repo.set_meta("embedding_model", embedder.model)
+        await repo.set_meta("embedding_dim", str(dim))
+        await repo.purge_embedding_cache(embedder.model)
+        recorder = ActivityRecorder(repo)
+        await recorder.record("reindex", {}, summary=f"re-embedded {embedded} chunks")
+        return embedded
+    finally:
+        await db.close()
 
 
 def detect_target_kind(target: str) -> str:
@@ -132,6 +185,7 @@ async def ingest_source(
                 f"the active embedder produces {embedder.dim}. Set or unset VOYAGE_API_KEY "
                 "to match the init-time provider, or re-init the wiki."
             )
+        await ensure_embedding_compat(repo, embedder)
         await index_owner(
             repo, embedder, owner_type="raw_source", owner_id=source_id, text=stored.text
         )
@@ -153,7 +207,6 @@ async def run_ingest(home: Path, target: str) -> tuple[RawSource, bool]:
     Builds the real embedder + HTTP client and delegates to :func:`ingest_source`.
     """
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.embed.factory import build_embedding_provider
 
     cfg = load_config(home)
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
@@ -279,7 +332,6 @@ async def run_compile(home: Path, *, full: bool) -> list[Article]:
     """
     from wikiforge.activity.cost import CostTracker
     from wikiforge.compile.compiler import Compiler
-    from wikiforge.embed.factory import build_embedding_provider
     from wikiforge.llm.factory import build_llm_provider
 
     cfg = load_config(home)
@@ -289,6 +341,7 @@ async def run_compile(home: Path, *, full: bool) -> list[Article]:
         tracker = CostTracker(repo, cfg)
         llm = build_llm_provider(cfg, tracker)
         embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
+        await ensure_embedding_compat(repo, embedder)
         compiler = Compiler(llm, embedder, repo, cfg, home)
         return await compiler.compile_all(force=full)
     finally:
@@ -345,7 +398,6 @@ async def run_query(home: Path, query: str, *, depth: str, scope: str = "all") -
     and wired in as the reranker; ``quick``/``standard`` queries never load it.
     """
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.embed.factory import build_embedding_provider
     from wikiforge.llm.factory import build_llm_provider
     from wikiforge.query.service import answer_query
     from wikiforge.search.retriever import HybridRetriever
@@ -357,6 +409,7 @@ async def run_query(home: Path, query: str, *, depth: str, scope: str = "all") -
         tracker = CostTracker(repo, cfg)
         llm = build_llm_provider(cfg, tracker)
         embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
+        await ensure_embedding_compat(repo, embedder)
         retriever = HybridRetriever(repo, embedder, cfg, reranker=_reranker_for(cfg, depth))
         return await answer_query(llm, retriever, query, depth=depth, scope=scope)
     finally:
@@ -373,7 +426,6 @@ async def run_extract(
     calling agent whose context is already paid for, so it can synthesize the answer
     itself instead of paying for a second LLM round trip.
     """
-    from wikiforge.embed.factory import build_embedding_provider
     from wikiforge.query.service import extract_query
     from wikiforge.search.retriever import HybridRetriever
 
@@ -382,6 +434,7 @@ async def run_extract(
     try:
         repo = Repository(db)
         embedder = build_embedding_provider(cfg, repo)
+        await ensure_embedding_compat(repo, embedder)
         retriever = HybridRetriever(repo, embedder, cfg, reranker=_reranker_for(cfg, depth))
         return await extract_query(retriever, query, depth=depth, scope=scope)
     finally:
@@ -684,7 +737,6 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
 
     Builds only the embedder + retriever — never an LLM provider (zero LLM calls).
     """
-    from wikiforge.embed.factory import build_embedding_provider
     from wikiforge.ops.recall import parse_prompt_hook_stdin, recall_excerpts, should_recall
     from wikiforge.search.retriever import HybridRetriever
 
@@ -700,6 +752,7 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     try:
         repo = Repository(db)
         embedder = build_embedding_provider(cfg, repo)
+        await ensure_embedding_compat(repo, embedder)
         retriever = HybridRetriever(repo, embedder, cfg)
         return await recall_excerpts(retriever, embedder, cfg, prompt)
     finally:
@@ -709,7 +762,6 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
 async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
     """Backfill dev-log vectors; with ``digests`` also batch-summarize pending events."""
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.embed.factory import build_embedding_provider
     from wikiforge.llm.factory import build_llm_provider
     from wikiforge.ops.flush import flush_dev_events
 
@@ -721,6 +773,7 @@ async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
         repo = Repository(db)
         tracker = CostTracker(repo, cfg)
         embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
+        await ensure_embedding_compat(repo, embedder)
         llm = None
         if digests:
             try:
