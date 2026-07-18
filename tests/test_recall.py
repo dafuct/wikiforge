@@ -33,54 +33,70 @@ class _Cfg:
 class _StubRetriever:
     def __init__(self, targets):
         self._targets = targets
+        self.query_vec_seen: list[float] | None = None
 
-    async def retrieve(self, query, *, depth="standard", include_archived=False, owner_types=None):
+    async def retrieve(self, query, *, depth="standard", include_archived=False,
+                       owner_types=None, query_vec=None):
         assert owner_types == ["article", "raw_source"]
+        self.query_vec_seen = query_vec
         return self._targets
 
 
-class _GateEmbedder:
-    """First vector is the prompt; relevance controlled per-chunk by keyword."""
+class _CountingEmbedder:
+    """Embeds the prompt as a fixed unit vector and counts calls."""
 
     dim = 4
     model = "fake"
     provider_name = "fake"
 
+    def __init__(self):
+        self.calls: list[tuple[int, str]] = []
+
     async def embed(self, texts, *, kind="passage"):
-        return [
-            [1.0, 0.0, 0.0, 0.0] if "deadlock" in t else [0.0, 1.0, 0.0, 0.0]
-            for t in texts
-        ]
+        self.calls.append((len(texts), kind))
+        return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
 
 
-def _target(text: str, seq: int = 0) -> ChunkTarget:
-    return ChunkTarget(rowid=seq + 1, owner_type="raw_source", owner_id=5, seq=seq,
+class _VecRepo:
+    """Serves stored chunk vectors by rowid, like sqlite-vec would."""
+
+    def __init__(self, vectors: dict[int, list[float]]):
+        self._vectors = vectors
+
+    async def chunk_vectors(self, rowids):
+        return {r: self._vectors[r] for r in rowids if r in self._vectors}
+
+
+def _target(text: str, rowid: int, seq: int = 0) -> ChunkTarget:
+    return ChunkTarget(rowid=rowid, owner_type="raw_source", owner_id=5, seq=seq,
                        text=text, topic_id=None, topic_status=None)
 
 
-async def test_recall_gates_by_similarity_and_seals() -> None:
-    targets = [_target("we hit a deadlock in the bridge"), _target("unrelated grocery note", 1)]
-    out = await recall_excerpts(
-        _StubRetriever(targets), _GateEmbedder(), _Cfg(), "why the deadlock in the bridge?"
-    )
+async def test_recall_gates_on_stored_vectors_with_one_prompt_embed() -> None:
+    targets = [_target("we hit a deadlock in the bridge", 1),
+               _target("unrelated grocery note", 2, seq=1)]
+    repo = _VecRepo({1: [1.0, 0.0, 0.0, 0.0], 2: [0.0, 1.0, 0.0, 0.0]})
+    embedder = _CountingEmbedder()
+    retriever = _StubRetriever(targets)
+    out = await recall_excerpts(repo, retriever, embedder, _Cfg(),
+                                "why the deadlock in the bridge?")
     assert out.startswith(RECALL_HEADER)
     assert "deadlock in the bridge" in out
-    assert "grocery" not in out                      # below min_similarity — filtered
-    assert "<source_data id='raw_source:5#0'>" in out
+    assert "grocery" not in out
+    assert embedder.calls == [(1, "query")]          # ONE embed call, query kind, prompt only
+    assert retriever.query_vec_seen == [1.0, 0.0, 0.0, 0.0]  # reused, not re-embedded
 
 
-async def test_recall_returns_empty_when_nothing_passes() -> None:
-    out = await recall_excerpts(
-        _StubRetriever([_target("unrelated grocery note")]), _GateEmbedder(), _Cfg(),
-        "why the deadlock in the bridge?"
-    )
+async def test_recall_skips_candidates_without_stored_vectors() -> None:
+    repo = _VecRepo({})   # vector backfill hasn't run yet
+    out = await recall_excerpts(repo, _StubRetriever([_target("anything at all", 1)]),
+                                _CountingEmbedder(), _Cfg(), "why the deadlock in the bridge?")
     assert out == ""
 
 
 async def test_recall_returns_empty_on_no_hits() -> None:
-    out = await recall_excerpts(
-        _StubRetriever([]), _GateEmbedder(), _Cfg(), "why the deadlock in the bridge?"
-    )
+    out = await recall_excerpts(_VecRepo({}), _StubRetriever([]), _CountingEmbedder(),
+                                _Cfg(), "why the deadlock in the bridge?")
     assert out == ""
 
 

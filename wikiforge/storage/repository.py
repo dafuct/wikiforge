@@ -843,6 +843,20 @@ class Repository:
             )
         return targets
 
+    async def chunk_vectors(self, rowids: list[int]) -> dict[int, list[float]]:
+        """Return the stored embedding for each rowid that has one (missing ids omitted)."""
+        out: dict[int, list[float]] = {}
+        for rowid in rowids:
+            row = await self._q.chunk_vector(self._db.conn, rowid=rowid)
+            if row is not None:
+                out[rowid] = [float(x) for x in json.loads(row["embedding"])]
+        return out
+
+    async def has_chunks(self) -> bool:
+        """Return whether any chunk row exists (cheap pre-flight for the recall hook)."""
+        row = await self._q.has_chunks(self._db.conn)
+        return bool(row["n"]) if row is not None else False
+
     async def insert_inventory_item(self, item: InventoryItem) -> int:
         """Insert a catalogued inventory item and return its id."""
         async with self._db.lock:

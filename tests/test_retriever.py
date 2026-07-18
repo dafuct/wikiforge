@@ -151,6 +151,18 @@ async def test_owner_types_override_surfaces_devlog_at_standard_depth(env) -> No
     assert any(h.owner_type == "raw_source" for h in all_hits)
 
 
+async def test_retrieve_with_query_vec_skips_embed_call(env) -> None:
+    cfg, repo, emb = env
+    await _article_chunk(
+        repo, emb, "rust-async", "# Rust Async\n\nRust async is cooperative and fast."
+    )
+    r = HybridRetriever(repo, emb, cfg)
+    calls_before = len(emb.kinds_seen)
+    hits = await r.retrieve("async rust", depth="quick", query_vec=[1.0, 1.0, 0.0, 0.1])
+    assert len(emb.kinds_seen) == calls_before  # no new embed call — vector was reused
+    assert hits
+
+
 async def test_owner_types_devlog_only(env) -> None:
     cfg, repo, emb = env
     await _article_chunk(repo, emb, "rust-async", "# Rust Async\n\nRust async is cooperative.")
