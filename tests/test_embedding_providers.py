@@ -112,6 +112,52 @@ async def test_provider_dim_agrees_with_effective_dim(wiki_home: Path) -> None:
     await db.close()
 
 
+async def test_local_e5_applies_kind_prefixes_before_encoder() -> None:
+    seen: list[list[str]] = []
+
+    def encoder(texts: list[str]) -> list[list[float]]:
+        seen.append(texts)
+        return [[1.0, 0.0] for _ in texts]
+
+    provider = LocalEmbeddingProvider(
+        model="intfloat/multilingual-e5-small", dim=2, encoder=encoder
+    )
+    await provider.embed(["alpha"], kind="query")
+    await provider.embed(["beta"])
+    assert seen[0] == ["query: alpha"]
+    assert seen[1] == ["passage: beta"]
+
+
+async def test_local_non_e5_model_gets_no_prefix() -> None:
+    seen: list[list[str]] = []
+
+    def encoder(texts: list[str]) -> list[list[float]]:
+        seen.append(texts)
+        return [[1.0, 0.0] for _ in texts]
+
+    provider = LocalEmbeddingProvider(model="BAAI/bge-small-en-v1.5", dim=2, encoder=encoder)
+    await provider.embed(["alpha"], kind="query")
+    assert seen[0] == ["alpha"]
+
+
+@respx.mock
+async def test_voyage_kind_sets_input_type() -> None:
+    route = respx.post(_VOYAGE).mock(
+        return_value=httpx.Response(200, json={"data": [{"embedding": [0.1, 0.2, 0.3, 0.4]}]})
+    )
+    provider = VoyageEmbeddingProvider(api_key="k", model="voyage-3.5", dim=4)
+    await provider.embed(["hello"], kind="query")
+    await provider.embed(["hello"])
+    await provider.aclose()
+    assert route.calls[0].request.content
+    import json as _json
+
+    first_body = _json.loads(route.calls[0].request.content)
+    second_body = _json.loads(route.calls[1].request.content)
+    assert first_body["input_type"] == "query"
+    assert second_body["input_type"] == "document"
+
+
 async def test_voyage_records_embedding_cost(wiki_home: Path) -> None:
     from wikiforge.activity.cost import CostTracker
     from wikiforge.config.settings import load_config, write_default_config

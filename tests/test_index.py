@@ -27,7 +27,9 @@ class FakeEmbedder:
     def provider_name(self) -> str:
         return "fake"
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(
+        self, texts: list[str], *, kind: str = "passage"
+    ) -> list[list[float]]:
         return [[float(len(t)), 0.0, 0.0, 0.0] for t in texts]
 
 

@@ -61,7 +61,7 @@ HIGH = 14
 [embedding]
 provider = "auto"
 voyage_model = "voyage-3.5"
-local_model = "BAAI/bge-small-en-v1.5"
+local_model = "intfloat/multilingual-e5-small"
 dim = 1024
 local_dim = 384
 
@@ -105,5 +105,5 @@ redact = true
 enabled = true             # UserPromptSubmit hook: inject wiki excerpts into session (no LLM)
 max_excerpts = 3
 max_chars = 600
-min_similarity = 0.6     # measured on bge-small: unrelated prompts peak ~0.50, relevant ~0.72+
+min_similarity = 0.80    # PROVISIONAL for multilingual-e5-small — recalibrated in the final task
 """

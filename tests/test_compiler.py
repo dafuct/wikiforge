@@ -60,7 +60,7 @@ class FakeEmbedder:
     def provider_name(self) -> str:
         return "fake"
 
-    async def embed(self, texts):
+    async def embed(self, texts, *, kind="passage"):
         return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
 
 

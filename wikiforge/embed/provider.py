@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Literal, Protocol
 
 from wikiforge.ingest.canonical import content_hash
 from wikiforge.models.domain import EmbeddingCacheEntry
@@ -21,8 +21,10 @@ class EmbeddingProvider(Protocol):
     @property
     def provider_name(self) -> str: ...
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Return one embedding vector per input text, in order."""
+    async def embed(
+        self, texts: list[str], *, kind: Literal["query", "passage"] = "passage"
+    ) -> list[list[float]]:
+        """Return one embedding per text. ``kind`` marks asymmetric-model inputs."""
         ...
 
 
@@ -49,8 +51,18 @@ class CachedEmbeddingProvider:
     def provider_name(self) -> str:
         return self._base.provider_name
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Return embeddings for ``texts``, embedding only cache misses."""
+    async def embed(
+        self, texts: list[str], *, kind: Literal["query", "passage"] = "passage"
+    ) -> list[list[float]]:
+        """Return embeddings for ``texts``; only ``passage`` embeddings are cached.
+
+        Query embeddings bypass the cache: asymmetric models (e5) produce a
+        different vector for the same text as query vs passage, and the cache
+        key has no kind component.
+        """
+        if kind == "query":
+            return await self._base.embed(texts, kind=kind)
+
         hashes = [content_hash(t) for t in texts]
         results: list[list[float] | None] = []
         misses: list[int] = []
@@ -61,7 +73,7 @@ class CachedEmbeddingProvider:
                 misses.append(i)
 
         if misses:
-            fresh = await self._base.embed([texts[i] for i in misses])
+            fresh = await self._base.embed([texts[i] for i in misses], kind="passage")
             for idx, vector in zip(misses, fresh, strict=True):
                 results[idx] = vector
                 await self._repo.put_embedding(

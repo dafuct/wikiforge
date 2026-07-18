@@ -352,7 +352,9 @@ async def test_archived_topic_excluded_from_retrieval(wiki_home: Path) -> None:
         def provider_name(self) -> str:
             return "kw"
 
-        async def embed(self, texts: list[str]) -> list[list[float]]:
+        async def embed(
+            self, texts: list[str], *, kind: str = "passage"
+        ) -> list[list[float]]:
             return [[1.0 if "gizmo" in t.lower() else 0.0, 0.1, 0.1, 0.1] for t in texts]
 
     write_default_config(wiki_home, wiki_name="x")

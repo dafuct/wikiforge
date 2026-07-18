@@ -46,7 +46,7 @@ class _GateEmbedder:
     model = "fake"
     provider_name = "fake"
 
-    async def embed(self, texts):
+    async def embed(self, texts, *, kind="passage"):
         return [
             [1.0, 0.0, 0.0, 0.0] if "deadlock" in t else [0.0, 1.0, 0.0, 0.0]
             for t in texts

@@ -29,7 +29,7 @@ class ConcurrencyEmbedder:
     model = "fake"
     provider_name = "fake"
 
-    async def embed(self, texts):
+    async def embed(self, texts, *, kind="passage"):
         words = ("deadlock", "concurrency", "паралельн", "async")
         return [
             [1.0 if any(w in t.lower() for w in words) else 0.0, 0.0, 0.0, 0.1]

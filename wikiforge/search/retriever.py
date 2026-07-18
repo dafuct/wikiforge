@@ -55,7 +55,7 @@ class HybridRetriever:
         top_k = self._config.retrieval.top_k
         candidate_limit = top_k * _CANDIDATE_MULTIPLIER
 
-        (query_vec,) = await self._embedder.embed([query])
+        (query_vec,) = await self._embedder.embed([query], kind="query")
         fts_ids = await self._fts_search(query, owner_types, candidate_limit)
         vec_ids = await self._repo.vec_search(query_vec, owner_types, candidate_limit)
 
