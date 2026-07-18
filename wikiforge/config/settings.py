@@ -24,13 +24,15 @@ class ModelPrice(BaseModel):
 
 
 class ModelsConfig(BaseModel):
-    """Model-routing configuration: two tiers plus a task→tier map."""
+    """Model-routing configuration: three tiers plus task→tier and task→effort maps."""
 
     model_config = ConfigDict(extra="forbid")
 
     cheap: str
     flagship: str
+    reasoning: str | None = None
     tasks: dict[str, str] = Field(default_factory=dict)
+    effort: dict[str, Literal["low", "medium", "high"]] = Field(default_factory=dict)
 
 
 class WebSearchConfig(BaseModel):
@@ -102,11 +104,12 @@ class ConfidenceConfig(BaseModel):
 
 
 class LlmConfig(BaseModel):
-    """Which backend serves LLM calls: the Anthropic API or the Claude subscription."""
+    """Which backend serves LLM calls, and the subscription subprocess timeout."""
 
     model_config = ConfigDict(extra="forbid")
 
     backend: LlmBackend = LlmBackend.API
+    subprocess_timeout_s: float = 300.0
 
 
 class CaptureConfig(BaseModel):
@@ -162,11 +165,26 @@ class Config(BaseModel):
     def model_for_task(self, task: str, tier: str | None = None) -> str:
         """Resolve a task (and optional explicit tier override) to a model ID.
 
-        An explicit ``tier`` ("cheap"/"flagship") wins; otherwise the tier comes
-        from the task->tier map (defaulting to "flagship").
+        An explicit ``tier`` wins; otherwise the tier comes from the task->tier
+        map (defaulting to "flagship"). Tiers: cheap | flagship | reasoning.
         """
         resolved_tier = tier or self.models.tasks.get(task, "flagship")
-        return self.models.flagship if resolved_tier == "flagship" else self.models.cheap
+        if resolved_tier == "flagship":
+            return self.models.flagship
+        if resolved_tier == "cheap":
+            return self.models.cheap
+        if resolved_tier == "reasoning":
+            if self.models.reasoning is None:
+                raise ValueError(
+                    f"task {task!r} routes to tier 'reasoning' but [models] has no "
+                    "reasoning model configured"
+                )
+            return self.models.reasoning
+        raise ValueError(f"unknown model tier {resolved_tier!r} for task {task!r}")
+
+    def effort_for_task(self, task: str) -> str:
+        """Return the subscription-backend effort for a task (default: low)."""
+        return self.models.effort.get(task, "low")
 
     def personas_for_mode(self, mode: str) -> list[str]:
         """Return the ordered persona list for a research mode."""

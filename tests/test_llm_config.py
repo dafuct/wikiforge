@@ -22,7 +22,9 @@ def test_config_without_llm_section_defaults_to_api(wiki_home: Path) -> None:
     write_default_config(wiki_home, wiki_name="x")
     text = (wiki_home / "config.toml").read_text(encoding="utf-8")
     stripped = "\n".join(
-        line for line in text.splitlines() if not line.startswith(("[llm]", "backend ="))
+        line
+        for line in text.splitlines()
+        if not line.startswith(("[llm]", "backend =", "subprocess_timeout_s"))
     )
     (wiki_home / "config.toml").write_text(stripped, encoding="utf-8")
     cfg = load_config(wiki_home)
