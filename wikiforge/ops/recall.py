@@ -42,31 +42,38 @@ def should_recall(prompt: str) -> bool:
     return len(stripped) >= _MIN_PROMPT_CHARS and not stripped.startswith("/")
 
 
+# Ukrainian alternatives are heuristic stems (same convention as infer_event_type in
+# capture.py): a leading \b anchors the start so short stems can't match mid-word, but
+# the right side is intentionally left open on stems meant to match inflected forms
+# (виправ, полагод, рефактор, архітектур, одруківк, дизайн, реалізуй). Residual
+# short-stem collisions (e.g. баг vs багато) are an accepted trade-off for an
+# advisory, default-off hint.
 _ROUTE_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "mechanical",
         re.compile(
             r"\b(rename|reformat|format|typo|reorder|bump)\b|boilerplate|"
-            r"перейменуй|відформатуй|одруківк",
+            r"\bперейменуй|\bвідформатуй|\bодруківк",
             re.IGNORECASE,
         ),
     ),
     (
         "code",
         re.compile(
-            r"\b(fix(es|ed|ing)?|bug|crash|implement|refactor)\b|виправ|полагод|"
-            r"баг|реалізуй|рефактор",
+            r"\b(fix(es|ed|ing)?|bug|crash|implement|refactor)\b|\bвиправ|\bполагод|"
+            r"\bбаг|\bреалізуй|\bрефактор",
             re.IGNORECASE,
         ),
     ),
     (
         "search",
-        re.compile(r"\b(where|find|grep|locate)\b|де\s|знайди|пошук", re.IGNORECASE),
+        re.compile(r"\b(where|find|grep|locate)\b|\bде\b|\bзнайди|\bпошук", re.IGNORECASE),
     ),
     (
         "reasoning",
         re.compile(
-            r"\b(why|design|architecture|trade-?off|compare)\b|чому|дизайн|архітектур|порівняй",
+            r"\b(why|design|architecture|trade-?off|compare)\b|"
+            r"\bчому|\bдизайн|\bархітектур|\bпорівняй",
             re.IGNORECASE,
         ),
     ),
