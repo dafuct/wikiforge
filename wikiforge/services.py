@@ -733,9 +733,11 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     is absent or holds no chunks, so non-wiki projects pay ~0 ms per prompt.
     """
     from wikiforge.ops.recall import (
+        classify_route,
         parse_hook_session_id,
         parse_prompt_hook_stdin,
         recall_excerpts,
+        route_hint_line,
         should_recall,
     )
     from wikiforge.search.retriever import HybridRetriever
@@ -749,20 +751,29 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     prompt = parse_prompt_hook_stdin(hook_stdin)
     if prompt is None or not should_recall(prompt):
         return ""
-    session_id = parse_hook_session_id(hook_stdin)
-    if not (home / DB_FILENAME).exists():
-        return ""
-    db = await Database.open(home, dim=effective_embedding_dim(cfg))
-    try:
-        repo = Repository(db)
-        if not await repo.has_chunks():
-            return ""
-        embedder = build_embedding_provider(cfg, repo)
-        await ensure_embedding_compat(repo, embedder)
-        retriever = HybridRetriever(repo, embedder, cfg)
-        return await recall_excerpts(repo, retriever, embedder, cfg, prompt, session_id=session_id)
-    finally:
-        await db.close()
+    hint = ""
+    if cfg.recall.routing_hint:
+        label = classify_route(prompt)
+        if label is not None:
+            hint = route_hint_line(label)
+    excerpts = ""
+    if (home / DB_FILENAME).exists():
+        db = await Database.open(home, dim=effective_embedding_dim(cfg))
+        try:
+            repo = Repository(db)
+            if await repo.has_chunks():
+                embedder = build_embedding_provider(cfg, repo)
+                await ensure_embedding_compat(repo, embedder)
+                retriever = HybridRetriever(repo, embedder, cfg)
+                excerpts = await recall_excerpts(
+                    repo, retriever, embedder, cfg, prompt,
+                    session_id=parse_hook_session_id(hook_stdin),
+                )
+        finally:
+            await db.close()
+    if excerpts and hint:
+        return f"{excerpts}\n\n{hint}"
+    return excerpts or hint
 
 
 async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
