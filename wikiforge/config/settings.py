@@ -152,6 +152,11 @@ class RecallConfig(BaseModel):
     enabled: bool = True
     max_excerpts: int = 3
     max_chars: int = 600
+    # Calibrated for intfloat/multilingual-e5-small on the live wiki (2026-07-18):
+    # unrelated uk+en prompts sit ~0.775–0.81, relevant ones ~0.80–0.90. e5's floor
+    # is high and tight, so the bands nearly touch; 0.80 favors recall sensitivity
+    # for multilingual prompts (the point of the e5 switch), and the session dedup +
+    # advisory nature keep the rare false positive cheap. Re-measure if the model changes.
     min_similarity: float = 0.80
     dedup: bool = True
     devlog_half_life_days: float = 14.0
