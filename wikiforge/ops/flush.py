@@ -106,6 +106,8 @@ async def flush_dev_events(
     per-event input capped at ``_EVENT_TEXT_CAP`` chars. Items whose id is unknown
     or whose type is off-vocabulary are skipped (per-item salvage); a round that
     applies nothing stops the loop so a misbehaving model can't spin forever.
+    Each LLM call attempt increments the batch counter even if it fails, ensuring
+    the loop is bounded.
 
     ``max_batches`` caps the number of LLM calls (the SessionStart auto-digest
     budget); ``None`` drains the backlog (the manual ``--digests`` path).
@@ -123,13 +125,13 @@ async def flush_dev_events(
                 "</source_data>"
                 for e in events
             )
+            batches += 1
             try:
                 result = await llm.parse(
                     "capture", _BATCH_SYSTEM, payload, tier="cheap", schema=BatchDigestOut
                 )
             except Exception:
                 break
-            batches += 1
             by_id = {e.id: e for e in events if e.id is not None}
             applied = 0
             for item in result.parsed.items:

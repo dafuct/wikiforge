@@ -165,3 +165,42 @@ async def test_flush_salvages_partial_batch(tmp_path: Path) -> None:
         assert applied.id == bad_sid
     finally:
         await db.close()
+
+
+async def test_flush_failing_llm_terminates_under_budget(tmp_path: Path) -> None:
+    """A failing LLM backend never loops forever and never fabricates digests.
+
+    Regression: ``batches += 1`` must increment BEFORE the try/except so every
+    attempt counts toward max_batches, ensuring the loop is bounded even if
+    LLM calls fail.
+    """
+    db, repo, cfg = await _wiki(tmp_path)
+    try:
+        # Seed >= 1 pending event
+        await _pending_event(repo, cfg)
+
+        # LLM stub that fails on every parse call
+        class FailingLLM:
+            async def parse(self, purpose, system, user, *, tier=None, schema, topic_id=None,
+                           session_id=None):
+                raise RuntimeError("Simulated LLM failure")
+
+            async def complete(self, *a, **k):
+                raise NotImplementedError
+
+        # Flush with max_batches=2: should attempt up to 2 calls, fail both times,
+        # and return without hanging
+        stats = await flush_dev_events(
+            repo, DimEmbedder(), FailingLLM(), cfg, digests=True,
+            batch_size=1, max_batches=2
+        )
+
+        # Assert: loop terminates, no digests fabricated
+        assert stats.digested_events == 0
+
+        # Assert: vectors still backfilled (free work, unaffected by LLM failure)
+        assert stats.embedded_chunks > 0 or await repo.chunks_missing_vectors(
+            owner_type="raw_source", limit=10
+        ) == []
+    finally:
+        await db.close()
