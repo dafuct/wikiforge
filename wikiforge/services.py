@@ -735,10 +735,12 @@ async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
 async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     """Return sealed wiki excerpts for a UserPromptSubmit payload; "" on any skip.
 
-    Builds only the embedder + retriever — never an LLM provider (zero LLM calls).
+    Fast path: bail out before touching the embedding stack when the wiki DB
+    is absent or holds no chunks, so non-wiki projects pay ~0 ms per prompt.
     """
     from wikiforge.ops.recall import parse_prompt_hook_stdin, recall_excerpts, should_recall
     from wikiforge.search.retriever import HybridRetriever
+    from wikiforge.storage.db import DB_FILENAME
 
     if not (home / CONFIG_FILENAME).exists():
         return ""
@@ -748,13 +750,17 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     prompt = parse_prompt_hook_stdin(hook_stdin)
     if prompt is None or not should_recall(prompt):
         return ""
+    if not (home / DB_FILENAME).exists():
+        return ""
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:
         repo = Repository(db)
+        if not await repo.has_chunks():
+            return ""
         embedder = build_embedding_provider(cfg, repo)
         await ensure_embedding_compat(repo, embedder)
         retriever = HybridRetriever(repo, embedder, cfg)
-        return await recall_excerpts(retriever, embedder, cfg, prompt)
+        return await recall_excerpts(repo, retriever, embedder, cfg, prompt)
     finally:
         await db.close()
 

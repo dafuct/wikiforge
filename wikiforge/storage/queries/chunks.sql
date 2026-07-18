@@ -29,3 +29,9 @@ FROM chunks c
 WHERE c.rowid NOT IN (SELECT rowid FROM chunks_vec)
 ORDER BY c.rowid
 LIMIT :limit;
+
+-- name: chunk_vector^
+SELECT vec_to_json(embedding) AS embedding FROM chunks_vec WHERE rowid = :rowid;
+
+-- name: has_chunks^
+SELECT EXISTS(SELECT 1 FROM chunks) AS n;

@@ -40,13 +40,15 @@ class HybridRetriever:
         depth: str = "standard",
         include_archived: bool = False,
         owner_types: list[str] | None = None,
+        query_vec: list[float] | None = None,
     ) -> list[ChunkTarget]:
         """Return the top-K chunks for a query, fused from FTS + vector search.
 
         ``owner_types`` decides what is searched (``None`` keeps the depth-derived
-        default: ``deep`` adds raw sources). ``deep`` additionally reranks with the
-        injected cross-encoder. Archived topics are excluded unless
-        ``include_archived``.
+        default: ``deep`` adds raw sources); ``query_vec`` (when given) reuses an
+        already-computed query embedding instead of embedding again. ``deep``
+        additionally reranks with the injected cross-encoder. Archived topics are
+        excluded unless ``include_archived``.
         """
         if owner_types is None:
             owner_types = (
@@ -55,7 +57,8 @@ class HybridRetriever:
         top_k = self._config.retrieval.top_k
         candidate_limit = top_k * _CANDIDATE_MULTIPLIER
 
-        (query_vec,) = await self._embedder.embed([query], kind="query")
+        if query_vec is None:
+            (query_vec,) = await self._embedder.embed([query], kind="query")
         fts_ids = await self._fts_search(query, owner_types, candidate_limit)
         vec_ids = await self._repo.vec_search(query_vec, owner_types, candidate_limit)
 

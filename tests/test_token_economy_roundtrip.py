@@ -87,7 +87,7 @@ async def test_saved_then_found(tmp_path: Path) -> None:
         # of digest content.
         retriever = HybridRetriever(repo, embedder, cfg)
         out = await recall_excerpts(
-            retriever, embedder, cfg, "у нас проблема з паралельністю в мості, що робити?"
+            repo, retriever, embedder, cfg, "у нас проблема з паралельністю в мості, що робити?"
         )
         assert out.startswith(RECALL_HEADER)
         assert "synchronous queue" in out          # raw request text came back semantically
