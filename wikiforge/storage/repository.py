@@ -376,6 +376,28 @@ class Repository:
         row = await self._q.count_dev_events_pending_digest(self._db.conn)
         return int(row["n"]) if row is not None else 0
 
+    async def dev_events_unconsolidated(self, cutoff_iso: str, *, limit: int) -> list[RawSource]:
+        """Return dev-event raw sources older than ``cutoff_iso`` and not yet consolidated."""
+        out: list[RawSource] = []
+        async for row in self._q.dev_events_unconsolidated(
+            self._db.conn, cutoff=cutoff_iso, limit=limit
+        ):
+            out.append(
+                RawSource(
+                    id=row["id"],
+                    content_hash=row["content_hash"],
+                    canonical_url=row["canonical_url"],
+                    source_type=SourceType(row["source_type"]),
+                    title=row["title"],
+                    text=row["text"],
+                    fetched_at=row["fetched_at"],
+                    first_seen_session_id=row["first_seen_session_id"],
+                    persona=row["persona"],
+                    provenance=json.loads(row["provenance"]),
+                )
+            )
+        return out
+
     async def set_raw_source_provenance(
         self, content_hash: str, provenance: dict[str, str]
     ) -> None:
@@ -841,6 +863,7 @@ class Repository:
                     topic_status=row["topic_status"],
                     owner_ts=row["owner_ts"],
                     owner_source_type=row["owner_source_type"],
+                    consolidated=row["consolidated"],
                 )
             )
         return targets

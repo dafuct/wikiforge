@@ -47,6 +47,7 @@ from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
 
 if TYPE_CHECKING:
+    from wikiforge.ops.consolidate import ConsolidateStats
     from wikiforge.search.retriever import Reranker
 
 
@@ -790,6 +791,39 @@ async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
             repo, embedder, llm, cfg,
             digests=want_digests,
             max_batches=None if digests else auto_batches,
+        )
+    finally:
+        await db.close()
+
+
+async def run_consolidate(home: Path, *, only_if_auto: bool = False) -> ConsolidateStats:
+    """Roll old dev events into the development-log article (one cheap call per period).
+
+    ``only_if_auto`` is the SessionStart entry: a no-op unless ``[consolidate]
+    auto = true``. Returns zero stats when no LLM backend can be built.
+    """
+    from datetime import UTC, datetime
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.ops.consolidate import ConsolidateStats, consolidate_dev_log
+
+    if not (home / CONFIG_FILENAME).exists():
+        return ConsolidateStats(periods=0, events=0)
+    cfg = load_config(home)
+    if only_if_auto and not cfg.consolidate.auto:
+        return ConsolidateStats(periods=0, events=0)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        tracker = CostTracker(repo, cfg)
+        embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
+        await ensure_embedding_compat(repo, embedder)
+        try:
+            llm = build_llm_provider(cfg, tracker)
+        except Exception:
+            return ConsolidateStats(periods=0, events=0)
+        return await consolidate_dev_log(
+            repo, embedder, llm, cfg, home, now=datetime.now(UTC)
         )
     finally:
         await db.close()

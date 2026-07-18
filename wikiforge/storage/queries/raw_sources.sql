@@ -27,3 +27,13 @@ SELECT COUNT(*) AS n
 FROM raw_sources
 WHERE source_type = 'dev_event'
   AND json_extract(provenance, '$.digest') = 'pending';
+
+-- name: dev_events_unconsolidated
+SELECT id, content_hash, canonical_url, source_type, title, text, fetched_at,
+       first_seen_session_id, persona, provenance
+FROM raw_sources
+WHERE source_type = 'dev_event'
+  AND json_extract(provenance, '$.consolidated') IS NULL
+  AND COALESCE(json_extract(provenance, '$.ts'), fetched_at) < :cutoff
+ORDER BY id
+LIMIT :limit;

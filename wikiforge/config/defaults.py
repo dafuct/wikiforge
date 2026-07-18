@@ -109,4 +109,9 @@ max_chars = 600
 min_similarity = 0.80    # PROVISIONAL for multilingual-e5-small — recalibrated in the final task
 dedup = true                # skip re-injecting chunks already recalled this session
 devlog_half_life_days = 14   # dev-log freshness half-life for recall ordering; 0 disables
+
+[consolidate]
+period = "week"        # rollup granularity: week | month
+min_age_days = 14      # only events older than this are consolidated
+auto = false           # also run at SessionStart (wiki consolidate --if-auto)
 """

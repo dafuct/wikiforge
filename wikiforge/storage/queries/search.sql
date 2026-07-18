@@ -41,7 +41,8 @@ ORDER BY v.distance;
 SELECT c.rowid AS rowid, c.owner_type AS owner_type, c.owner_id AS owner_id, c.seq AS seq, c.text AS text,
        t.id AS topic_id, t.status AS topic_status,
        COALESCE(json_extract(rs.provenance, '$.ts'), rs.fetched_at) AS owner_ts,
-       rs.source_type AS owner_source_type
+       rs.source_type AS owner_source_type,
+       json_extract(rs.provenance, '$.consolidated') AS consolidated
 FROM chunks c
 LEFT JOIN articles a ON c.owner_type = 'article' AND a.id = c.owner_id
 LEFT JOIN topics t ON t.id = a.topic_id
