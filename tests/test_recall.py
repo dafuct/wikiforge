@@ -258,6 +258,8 @@ def test_classify_route_en_uk_first_match_wins() -> None:
     assert classify_route("why does the design split scope from depth?") == "reasoning"
     assert classify_route("чому дизайн розділяє scope і depth?") == "reasoning"
     assert classify_route("random unmatched text") is None
+    # mechanical-before-code precedence: both triggers present, mechanical wins
+    assert classify_route("rename and fix the crash") == "mechanical"
 
 
 async def test_run_recall_hook_appends_hint_only_when_enabled(tmp_path, monkeypatch) -> None:
@@ -274,3 +276,11 @@ async def test_run_recall_hook_appends_hint_only_when_enabled(tmp_path, monkeypa
     payload = json.dumps({"prompt": "перейменуй поле конфіга будь ласка", "session_id": "s"})
     out = await run_recall_hook(home, payload)   # no DB file -> fast path, excerpts ""
     assert "wikiforge route hint: mechanical" in out
+
+    # With routing_hint left at default false, the same fast-path call must
+    # produce no hint line at all.
+    home2 = tmp_path / "wiki2"
+    home2.mkdir()
+    write_default_config(home2, wiki_name="T2")
+    out2 = await run_recall_hook(home2, payload)
+    assert out2 == ""
