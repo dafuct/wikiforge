@@ -244,3 +244,33 @@ async def test_recall_excludes_consolidated_devlog_chunks() -> None:
     out = await recall_excerpts(_VecRepo({1: [1.0, 0.0, 0.0, 0.0]}), _StubRetriever([t]),
                                 _CountingEmbedder(), _Cfg(), "why the deadlock in the bridge?")
     assert out == ""
+
+
+def test_classify_route_en_uk_first_match_wins() -> None:
+    from wikiforge.ops.recall import classify_route
+
+    assert classify_route("rename the config field and format the file") == "mechanical"
+    assert classify_route("перейменуй поле конфіга") == "mechanical"
+    assert classify_route("fix the deadlock crash in the bridge") == "code"
+    assert classify_route("виправ баг у recall") == "code"
+    assert classify_route("where is the retriever defined?") == "search"
+    assert classify_route("де визначений retriever?") == "search"
+    assert classify_route("why does the design split scope from depth?") == "reasoning"
+    assert classify_route("чому дизайн розділяє scope і depth?") == "reasoning"
+    assert classify_route("random unmatched text") is None
+
+
+async def test_run_recall_hook_appends_hint_only_when_enabled(tmp_path, monkeypatch) -> None:
+    # Arrange a wiki whose config has routing_hint = true and recall disabled paths bypassed:
+    # build home + config, flip the toml line, and stub the retrieval internals to return "".
+    from wikiforge.config.settings import write_default_config
+    from wikiforge.services import run_recall_hook
+
+    home = tmp_path / "wiki"
+    home.mkdir()
+    write_default_config(home, wiki_name="T")
+    toml = (home / "config.toml").read_text()
+    (home / "config.toml").write_text(toml.replace("routing_hint = false", "routing_hint = true"))
+    payload = json.dumps({"prompt": "перейменуй поле конфіга будь ласка", "session_id": "s"})
+    out = await run_recall_hook(home, payload)   # no DB file -> fast path, excerpts ""
+    assert "wikiforge route hint: mechanical" in out

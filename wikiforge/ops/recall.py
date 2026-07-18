@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 
 from wikiforge.config.settings import Config
@@ -39,6 +40,62 @@ def should_recall(prompt: str) -> bool:
     """Skip trivial prompts: too short to match anything, or slash commands."""
     stripped = prompt.strip()
     return len(stripped) >= _MIN_PROMPT_CHARS and not stripped.startswith("/")
+
+
+_ROUTE_RULES: list[tuple[str, re.Pattern[str]]] = [
+    (
+        "mechanical",
+        re.compile(
+            r"\b(rename|reformat|format|typo|reorder|bump)\b|boilerplate|"
+            r"перейменуй|відформатуй|одруківк",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "code",
+        re.compile(
+            r"\b(fix(es|ed|ing)?|bug|crash|implement|refactor)\b|виправ|полагод|"
+            r"баг|реалізуй|рефактор",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "search",
+        re.compile(r"\b(where|find|grep|locate)\b|де\s|знайди|пошук", re.IGNORECASE),
+    ),
+    (
+        "reasoning",
+        re.compile(
+            r"\b(why|design|architecture|trade-?off|compare)\b|чому|дизайн|архітектур|порівняй",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
+_ROUTE_HINTS = {
+    "mechanical": "cheap-model subagent fits",
+    "code": "standard coding model fits",
+    "search": "cheap search subagent fits",
+    "reasoning": "high-effort reasoning model fits",
+}
+
+
+def classify_route(prompt: str) -> str | None:
+    """Zero-LLM task-type classification (en+uk); ``None`` when nothing matches."""
+    for label, pattern in _ROUTE_RULES:
+        if pattern.search(prompt):
+            return label
+    return None
+
+
+def route_hint_line(label: str) -> str:
+    """The single stdout line fed to the orchestrator's routing policy.
+
+    A hook cannot switch the active session's model — this is a hint for the
+    orchestrator's own delegation decision, generated locally from the prompt
+    (trusted code, not source data), hence outside the sealed envelope.
+    """
+    return f"wikiforge route hint: {label} task — {_ROUTE_HINTS[label]}"
 
 
 def _dot(a: list[float], b: list[float]) -> float:
