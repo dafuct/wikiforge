@@ -53,9 +53,13 @@ def test_session_start_reinstalls_stale_cli() -> None:
     install = _hooks()["SessionStart"][0]["hooks"][0]["command"]
     assert "-newer" in install  # staleness probe: any source .py newer than the binary
     assert "--force" in install  # and a real reinstall when stale
-    # `--reinstall` is load-bearing, NOT redundant with `--force`: the package version
-    # never changes (0.1.0), so `uv tool install --force` alone happily reuses its
-    # CACHED wheel and reports success while installing the OLD code. Verified live
-    # 2026-07-15: --force alone left a stale default in place; --reinstall fixed it.
+    # `--reinstall` and `--no-cache` are load-bearing, NOT redundant with `--force`.
+    # A release bumps the package version, which uv treats as a new package and rebuilds
+    # cleanly — that is the primary update path. But WITHIN a version (dev iterations, or
+    # a plugin update that forgot to bump), `uv tool install --force` alone happily reuses
+    # its CACHED wheel and reports success while installing the OLD code (verified live
+    # 2026-07-15 and 2026-07-18). `--reinstall --no-cache` forces a fresh build from the
+    # updated source so a same-version source change still lands.
     assert "--reinstall" in install
+    assert "--no-cache" in install
     assert install.rstrip().endswith("true")  # still fail-safe
