@@ -106,4 +106,5 @@ enabled = true             # UserPromptSubmit hook: inject wiki excerpts into se
 max_excerpts = 3
 max_chars = 600
 min_similarity = 0.80    # PROVISIONAL for multilingual-e5-small — recalibrated in the final task
+dedup = true                # skip re-injecting chunks already recalled this session
 """

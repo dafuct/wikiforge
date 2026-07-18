@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 
 from wikiforge.config.settings import RecallConfig
-from wikiforge.ops.recall import parse_prompt_hook_stdin, recall_excerpts, should_recall
+from wikiforge.ops.recall import (
+    parse_hook_session_id,
+    parse_prompt_hook_stdin,
+    recall_excerpts,
+    should_recall,
+)
 from wikiforge.query.service import RECALL_HEADER
 from wikiforge.search.rrf import ChunkTarget
 
@@ -115,3 +120,51 @@ def test_recall_hook_cli_is_failsafe(monkeypatch, tmp_path) -> None:
         app, ["recall", "--hook", "--home", str(tmp_path)], input='{"prompt": "x"}'
     )
     assert result.exit_code == 0        # never fails the session
+
+
+def test_parse_hook_session_id() -> None:
+    assert parse_hook_session_id(json.dumps({"session_id": "abc", "prompt": "x"})) == "abc"
+    assert parse_hook_session_id(json.dumps({"prompt": "x"})) is None
+    assert parse_hook_session_id("not json") is None
+
+
+class _DedupRepo(_VecRepo):
+    def __init__(self, vectors, seen=frozenset()):
+        super().__init__(vectors)
+        self.seen = set(seen)
+        self.logged: list[tuple[str, int, int]] = []
+        self.purged: list[str] = []
+        self.ensured = False
+
+    async def ensure_recall_log(self):
+        self.ensured = True
+
+    async def recall_seen(self, session_id):
+        return set(self.seen)
+
+    async def log_recall(self, session_id, targets, ts_iso):
+        self.logged += [(t.owner_type, t.owner_id, t.seq) for t in targets]
+
+    async def purge_recall_log(self, cutoff_iso):
+        self.purged.append(cutoff_iso)
+
+
+async def test_recall_dedups_within_session_and_logs_injections() -> None:
+    targets = [_target("we hit a deadlock in the bridge", 1),
+               _target("deadlock retry strategy chosen", 2, seq=1)]
+    repo = _DedupRepo({1: [1.0, 0.0, 0.0, 0.0], 2: [1.0, 0.0, 0.0, 0.0]},
+                      seen={("raw_source", 5, 0)})          # first chunk already injected
+    out = await recall_excerpts(repo, _StubRetriever(targets), _CountingEmbedder(), _Cfg(),
+                                "why the deadlock in the bridge?", session_id="s1")
+    assert "retry strategy" in out
+    assert "we hit a deadlock" not in out                    # deduped
+    assert repo.logged == [("raw_source", 5, 1)]             # only the new injection logged
+    assert repo.ensured and repo.purged
+
+
+async def test_recall_without_session_id_skips_dedup() -> None:
+    repo = _DedupRepo({1: [1.0, 0.0, 0.0, 0.0]}, seen={("raw_source", 5, 0)})
+    retriever = _StubRetriever([_target("we hit a deadlock in the bridge", 1)])
+    out = await recall_excerpts(repo, retriever, _CountingEmbedder(), _Cfg(),
+                                "why the deadlock in the bridge?", session_id=None)
+    assert "deadlock" in out                                 # dedup gracefully skipped

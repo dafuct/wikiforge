@@ -857,6 +857,40 @@ class Repository:
         row = await self._q.has_chunks(self._db.conn)
         return bool(row["n"]) if row is not None else False
 
+    async def ensure_recall_log(self) -> None:
+        """Create the recall_log table if missing (wikis initialized pre-upgrade lack it)."""
+        await self._db.execute(
+            "CREATE TABLE IF NOT EXISTS recall_log ("
+            " session_id TEXT NOT NULL, owner_type TEXT NOT NULL, owner_id INTEGER NOT NULL,"
+            " seq INTEGER NOT NULL, ts TEXT NOT NULL,"
+            " PRIMARY KEY (session_id, owner_type, owner_id, seq))"
+        )
+
+    async def recall_seen(self, session_id: str) -> set[tuple[str, int, int]]:
+        """Return the (owner_type, owner_id, seq) chunks already injected this session."""
+        return {
+            (str(r["owner_type"]), int(r["owner_id"]), int(r["seq"]))
+            async for r in self._q.recall_log_seen(self._db.conn, session_id=session_id)
+        }
+
+    async def log_recall(
+        self, session_id: str, targets: list[ChunkTarget], ts_iso: str
+    ) -> None:
+        """Record the chunks injected into a session, so they are not repeated."""
+        async with self._db.lock:
+            for t in targets:
+                await self._q.insert_recall_log(
+                    self._db.conn, session_id=session_id, owner_type=t.owner_type,
+                    owner_id=t.owner_id, seq=t.seq, ts=ts_iso,
+                )
+            await self._db.conn.commit()
+
+    async def purge_recall_log(self, cutoff_iso: str) -> None:
+        """Drop recall-log rows older than the cutoff (opportunistic hygiene)."""
+        async with self._db.lock:
+            await self._q.purge_recall_log(self._db.conn, cutoff=cutoff_iso)
+            await self._db.conn.commit()
+
     async def insert_inventory_item(self, item: InventoryItem) -> int:
         """Insert a catalogued inventory item and return its id."""
         async with self._db.lock:
