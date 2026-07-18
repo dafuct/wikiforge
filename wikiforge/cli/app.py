@@ -395,6 +395,23 @@ def refresh(
 
 
 @app.command()
+def reindex(
+    home: str | None = HomeOption,
+    embeddings: bool = typer.Option(
+        False, "--embeddings", help="Rebuild every chunk vector with the active embedding model."
+    ),
+) -> None:
+    """Rebuild derived indexes after a config change (currently: --embeddings)."""
+    if not embeddings:
+        typer.echo("Error: pass --embeddings (the only reindex target today)", err=True)
+        raise typer.Exit(code=2)
+    from wikiforge.services import run_reindex
+
+    count = asyncio.run(run_reindex(resolve_home(home)))
+    typer.echo(f"Re-embedded {count} chunk(s) with the active embedding model")
+
+
+@app.command()
 def stats(
     home: str | None = HomeOption,
     since: str | None = typer.Option(

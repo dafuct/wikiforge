@@ -76,6 +76,19 @@ class Database:
         async with self._conn.execute(sql, params) as cur:
             return list(await cur.fetchall())
 
+    async def recreate_vec_table(self) -> None:
+        """Drop and re-create ``chunks_vec`` at this database's dimension.
+
+        Used by reindex: a changed embedding provider may change the vector
+        dimension, and vec0 fixes it at CREATE time.
+        """
+        async with self._lock:
+            await self._conn.execute("DROP TABLE IF EXISTS chunks_vec")
+            await self._conn.execute(
+                f"CREATE VIRTUAL TABLE chunks_vec USING vec0(embedding float[{self._dim}])"
+            )
+            await self._conn.commit()
+
     async def close(self) -> None:
         """Close the underlying connection."""
         await self._conn.close()

@@ -338,6 +338,19 @@ class Repository:
             )
         ]
 
+    async def all_chunks_missing_vectors(self, *, limit: int) -> list[tuple[int, str]]:
+        """Return ``(rowid, text)`` for chunks of ANY owner type with no vector row."""
+        return [
+            (int(r["rowid"]), str(r["text"]))
+            async for r in self._q.chunks_missing_vectors_all(self._db.conn, limit=limit)
+        ]
+
+    async def purge_embedding_cache(self, keep_model: str) -> None:
+        """Drop cached embeddings from every model except ``keep_model``."""
+        async with self._db.lock:
+            await self._q.purge_embedding_cache_other_models(self._db.conn, model=keep_model)
+            await self._db.conn.commit()
+
     async def dev_events_pending_digest(self, *, limit: int) -> list[RawSource]:
         """Return dev-event raw sources whose provenance marks the digest as pending."""
         out: list[RawSource] = []
