@@ -17,6 +17,9 @@ from wikiforge.storage.repository import Repository
 class KeywordEmbedder:
     """Deterministic dim-4 embedder: vector depends on presence of a few keywords."""
 
+    def __init__(self) -> None:
+        self.kinds_seen: list[str] = []
+
     @property
     def dim(self) -> int:
         return 4
@@ -29,7 +32,8 @@ class KeywordEmbedder:
     def provider_name(self) -> str:
         return "kw"
 
-    async def embed(self, texts):
+    async def embed(self, texts, *, kind="passage"):
+        self.kinds_seen.append(kind)
         out = []
         for t in texts:
             low = t.lower()
@@ -84,6 +88,7 @@ async def test_retrieve_finds_relevant_article(env) -> None:
     hits = await r.retrieve("async rust", depth="quick")
     assert any("Rust Async" in h.text for h in hits)
     assert all(h.owner_type == "article" for h in hits)
+    assert emb.kinds_seen[-1] == "query"
 
 
 async def test_archived_topic_excluded(env) -> None:

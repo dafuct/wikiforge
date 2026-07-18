@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
@@ -64,12 +66,20 @@ class VoyageEmbeddingProvider:
         wait=wait_exponential(multiplier=1, max=20),
         reraise=True,
     )
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(
+        self, texts: list[str], *, kind: Literal["query", "passage"] = "passage"
+    ) -> list[list[float]]:
         """Return one embedding per input text via the Voyage API (retried on failure)."""
+        input_type = "query" if kind == "query" else "document"
         response = await self._http().post(
             _ENDPOINT,
             headers={"Authorization": f"Bearer {self._api_key}"},
-            json={"input": texts, "model": self._model, "output_dimension": self._dim},
+            json={
+                "input": texts,
+                "model": self._model,
+                "output_dimension": self._dim,
+                "input_type": input_type,
+            },
         )
         response.raise_for_status()
         payload = response.json()

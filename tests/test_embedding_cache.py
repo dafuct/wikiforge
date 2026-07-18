@@ -29,7 +29,9 @@ class FakeEmbedder:
     def provider_name(self) -> str:
         return "fake"
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(
+        self, texts: list[str], *, kind: str = "passage"
+    ) -> list[list[float]]:
         self.calls += 1
         return [[float(len(t)), 0.0, 0.0, 0.0] for t in texts]
 
@@ -61,3 +63,28 @@ async def test_partial_hit_only_embeds_misses(cached) -> None:
     result = await provider.embed(["a", "bb"])  # "a" cached, only "bb" is new
     assert result == [[1.0, 0.0, 0.0, 0.0], [2.0, 0.0, 0.0, 0.0]]
     assert base.calls == 2
+
+
+async def test_cache_bypassed_for_query_kind(wiki_home: Path) -> None:
+    db = await Database.open(wiki_home, dim=4)
+    await db.init_schema()
+    repo = Repository(db)
+    calls: list[tuple[list[str], str]] = []
+
+    class Base:
+        dim = 2
+        model = "m"
+        provider_name = "p"
+
+        async def embed(self, texts, *, kind="passage"):
+            calls.append((list(texts), kind))
+            return [[1.0, 0.0] for _ in texts]
+
+    cached_provider = CachedEmbeddingProvider(Base(), repo)
+    await cached_provider.embed(["same text"], kind="query")
+    await cached_provider.embed(["same text"], kind="query")
+    assert len(calls) == 2  # never cached
+    await cached_provider.embed(["same text"])
+    await cached_provider.embed(["same text"])
+    assert len(calls) == 3  # passage path cached on second call
+    await db.close()

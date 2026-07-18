@@ -60,7 +60,7 @@ class KeywordEmbedder:
     def provider_name(self) -> str:
         return "kw"
 
-    async def embed(self, texts):
+    async def embed(self, texts, *, kind="passage"):
         return [[1.0 if "async" in t.lower() else 0.0, 0.0, 0.0, 0.1] for t in texts]
 
 
