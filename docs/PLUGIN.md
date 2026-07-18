@@ -33,6 +33,20 @@ On the first session after install, a background hook runs `uv tool install` to 
 /wikiforge:query "<a question>"   # cited answer
 ```
 
+## Automatic hooks
+
+The plugin wires three Claude Code hooks (all fail-safe — they never break a session):
+
+- **`SessionStart`** — ensures the `wiki` CLI is installed, then `wiki capture --flush`: backfills
+  dev-log vectors (free) and drains up to `[capture] auto_digest_batches` pending digests (default 1
+  cheap call); runs `wiki consolidate --if-auto` (a no-op unless `[consolidate] auto = true`); and
+  starts the read-only Viewer UI (macOS/Linux).
+- **`Stop`** — `wiki capture --hook`: records a dev event (your request, changed files, git diff stat)
+  after any file-editing task. Zero LLM at capture time.
+- **`UserPromptSubmit`** — `wiki recall --hook`: injects the most relevant wiki/dev-log excerpts into
+  the session. Zero LLM, multilingual, recency-weighted, and deduplicated within the session; it exits
+  immediately for a project with no knowledge base yet.
+
 ## Commands
 
 | Command | What it does | Cost |

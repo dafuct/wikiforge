@@ -129,8 +129,8 @@ local embeddings and makes **zero LLM calls**:
 | When | What happens | LLM cost |
 |---|---|---|
 | A task edits files | `Stop` hook records a **dev event**: your request (the why), changed files + `git diff --stat` (the what), an inferred type, the time | **none** |
-| Session starts | dev-log vectors are backfilled; a stale `wiki` CLI reinstalls itself | **none** |
-| You type a prompt | `UserPromptSubmit` hook injects the most relevant wiki + dev-log excerpts into the agent's context, so it skips re-exploring what's already known | **none** |
+| Session starts | dev-log vectors are backfilled; up to `auto_digest_batches` pending digests run (default 1 cheap call); old dev events consolidate if `[consolidate] auto`; a stale `wiki` CLI reinstalls itself | **≤1 cheap call** |
+| You type a prompt | `UserPromptSubmit` hook injects the most relevant wiki + dev-log excerpts (multilingual, recency-weighted, deduped within the session) into the agent's context, so it skips re-exploring what's already known | **none** |
 | The agent asks the wiki | MCP `search_knowledge` returns cited excerpts for the agent to synthesize in its own (already-paid-for) context | **none** |
 | You run `research` / `compile` / `--digests` | the only paths that spend tokens — always explicit | you choose |
 
@@ -150,9 +150,15 @@ It captures **uncommitted** work, so you never have to commit for the wiki to re
   digest-pending. `"sync"` is the old behavior — one cheap-tier call per event, at capture time.
   `"off"` never summarizes.
 - **Clearing the backlog:** `wiki capture --flush` backfills any dev-log chunks missing vectors (free,
-  no LLM) — the plugin's `SessionStart` hook already runs this once per session. Add `--digests` to
-  also batch-summarize pending events (one cheap-tier call per batch of up to 25) — run it yourself,
-  e.g. from a weekly cron, since the plugin never adds LLM cost automatically.
+  no LLM). The plugin's `SessionStart` hook runs this once per session and, with `[capture]
+  auto_digest_batches` (default **1**, `0` disables), also drains up to that many digest batches — one
+  cheap-tier call per batch of up to 25 events — so the pending backlog clears itself over normal use.
+  Add `--digests` to force a full manual drain (unbounded batches).
+- **Consolidation:** `wiki consolidate` rolls dev events older than `[consolidate] min_age_days`
+  (default 14) into a versioned **development-log** article, grouped by `period` (`week` | `month`) —
+  one cheap-tier call per period. Consolidated events drop out of recall (the rollup represents them)
+  but stay searchable via `--scope devlog`. Runs at `SessionStart` when `[consolidate] auto = true`
+  (default off); a run with nothing eligible is a free no-op.
 - **Read it back:** `wiki query "why did we change the retriever?"` — dev events are searched by
   default (`--scope all`, the default) at any `--depth`; scope, not depth, controls whether the dev
   log is included. Use `--scope devlog` to search only dev events, `--scope articles` for only
@@ -160,10 +166,17 @@ It captures **uncommitted** work, so you never have to commit for the wiki to re
   longer changes what's visible.
 - **Proactive recall:** a `UserPromptSubmit` hook (`wiki recall --hook`, zero LLM, 15s timeout) injects
   the most relevant wiki/dev-log excerpts into the session before the agent even starts, so it can
-  skip re-exploring what the wiki already knows. Configure it under `[recall]` in `config.toml`:
-  `enabled` (default `true`), `max_excerpts` (default 3), `max_chars` (default 600), and
-  `min_similarity` (default 0.6 — measured on the default `bge-small` embedder, unrelated prompts
-  peak around 0.50 while genuinely relevant ones score 0.72+; lower it and recall injects noise).
+  skip re-exploring what the wiki already knows. It embeds your prompt once and gates candidates
+  against their stored vectors (no re-embedding), so the retrieval work is ~20 ms; a fresh project
+  with no chunks exits before loading the model at all. Configure it under `[recall]` in `config.toml`:
+  `enabled` (default `true`), `max_excerpts` (default 3), `max_chars` (default 600),
+  `min_similarity` (default **0.80** — measured on the multilingual `e5-small` embedder, whose cosine
+  floor is high and tight: unrelated prompts sit ~0.78–0.81, relevant ones ~0.80–0.90; the value
+  favors recall sensitivity for multilingual prompts), `dedup` (default `true` — never re-inject a
+  chunk already shown this session), `devlog_half_life_days` (default 14 — fresher dev events outrank
+  staler ones at equal relevance; `0` disables), and `routing_hint` (default `false` — append a
+  zero-LLM task-type hint for an orchestrator's model-routing policy; a hook cannot switch the active
+  session's model, so it is a hint only).
 - **Privacy / control:** the raw request is stored (best-effort secret redaction). Turn capture
   off with `[capture] auto = false`, or raw-only with `summarize = "off"`, in `config.toml`.
 
@@ -208,12 +221,18 @@ wiki_name = "My Wiki"
 [models]                      # model routing by tier
 cheap = "claude-haiku-4-5"
 flagship = "claude-sonnet-5"
+reasoning = "claude-opus-4-8" # optional 3rd tier; opt in per task below
 
-[models.tasks]                # which tier each task uses
+[models.tasks]                # which tier each task uses (cheap | flagship | reasoning)
 research = "flagship"
 normalize = "cheap"
 query = "flagship"
+# thesis = "reasoning"        # e.g. route the hardest judgement calls to opus
 # …
+
+[models.effort]               # subscription backend only: claude -p --effort per task
+thesis = "medium"             # every unlisted task defaults to "low"
+synthesize = "medium"         # compile stays low — high effort exceeds the timeout
 
 [pricing."claude-sonnet-5"]   # USD per 1M tokens — drives cost tracking
 input = 3.0
@@ -221,10 +240,25 @@ output = 15.0
 
 [embedding]
 provider = "auto"             # auto | local | voyage
-local_model = "BAAI/bge-small-en-v1.5"   # 384-dim, no API key
+local_model = "intfloat/multilingual-e5-small"   # 384-dim, multilingual (uk+en), no API key
 voyage_model = "voyage-3.5"               # 1024-dim, needs VOYAGE_API_KEY
 dim = 1024                    # vector dim when using voyage
 local_dim = 384               # vector dim when using local
+
+[recall]                      # UserPromptSubmit memory injection (see "Agent memory")
+min_similarity = 0.80         # e5-small gate; dedup, devlog_half_life_days, routing_hint also here
+
+[capture]
+auto_digest_batches = 1       # SessionStart flush: max cheap digest batches (0 = off)
+
+[consolidate]
+period = "week"               # week | month
+min_age_days = 14             # only consolidate events older than this
+auto = false                  # also run at SessionStart when true
+
+[llm]
+backend = "api"               # api | subscription
+subprocess_timeout_s = 300    # per `claude -p` call; raise it if you route tasks to high effort
 
 [retrieval]
 top_k = 12
@@ -250,7 +284,9 @@ conflict_penalty_per = 0.1
 conflict_penalty_cap = 0.4
 ```
 
-**Embeddings.** With `provider = "auto"`, wikiforge uses Voyage when `VOYAGE_API_KEY` is set and the local model otherwise. The chosen provider's dimension **sizes the vector table at `wiki init`** — switching providers (and therefore dimension) on an existing wiki requires re-initializing it. Pick your embedding provider before you build up a wiki.
+**Embeddings.** With `provider = "auto"`, wikiforge uses Voyage when `VOYAGE_API_KEY` is set and the local model otherwise. The default local model is multilingual (`intfloat/multilingual-e5-small`), so recall works for non-English prompts. The chosen provider's dimension **sizes the vector table at `wiki init`** — switching providers (and therefore dimension) on an existing wiki requires re-initializing it. Pick your embedding provider before you build up a wiki.
+
+**Changing the local model / reindexing.** A wiki records which embedding model built its chunk vectors. Change `local_model` and the next indexed call refuses to run rather than fuse incompatible vectors — rebuild them with `wiki reindex --embeddings` (local, zero LLM cost, one-time). Same-dimension swaps (e.g. another 384-dim model) keep the vector table; a different dimension needs a re-init.
 
 **Cost & budgets.** Every call is priced from `[pricing]` and recorded. `wiki research`/`wiki thesis` take `--budget <usd>`: once cumulative session spend reaches the cap, no new persona wave starts and the session is marked `PARTIAL` (resume it later with `--resume`). Unknown models price at `0.0` — add them to `[pricing]` to track their cost.
 
@@ -274,6 +310,12 @@ wikiforge can run its LLM calls two ways, selected in `config.toml`:
   limits quickly — best for light/occasional use. Structured extraction is
   prompt-and-validate (slightly less robust than the API path), each call is slower, and
   the cost shown by `wiki stats` is a notional API-equivalent estimate, not a real charge.
+
+**Per-task effort (subscription only).** `[models.effort]` maps a task to `claude -p --effort`
+(`low` | `medium` | `high`); every unlisted task defaults to `low`. `compile` must stay `low` —
+high effort makes its structured-output call exceed `[llm] subprocess_timeout_s`. The `api` backend
+ignores effort. Combine with a `reasoning` tier (`[models.tasks] thesis = "reasoning"`) to send the
+hardest judgement calls to a stronger model; raise `subprocess_timeout_s` if you do.
 
 ---
 
