@@ -142,6 +142,7 @@ class RecallConfig(BaseModel):
     max_excerpts: int = 3
     max_chars: int = 600
     min_similarity: float = 0.80
+    dedup: bool = True
 
 
 class Config(BaseModel):

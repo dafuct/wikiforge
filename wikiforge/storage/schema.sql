@@ -171,6 +171,15 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     PRIMARY KEY (content_hash, provider, model)
 );
 
+CREATE TABLE IF NOT EXISTS recall_log (
+    session_id TEXT NOT NULL,
+    owner_type TEXT NOT NULL,
+    owner_id INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
+    ts TEXT NOT NULL,
+    PRIMARY KEY (session_id, owner_type, owner_id, seq)
+);
+
 -- `owner_id` is UNINDEXED (not part of the full-text index) but is mirrored
 -- here so callers can `SELECT owner_id FROM chunks_fts WHERE ... MATCH ...`
 -- without an extra join back to `chunks`.

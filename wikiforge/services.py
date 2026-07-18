@@ -738,7 +738,12 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     Fast path: bail out before touching the embedding stack when the wiki DB
     is absent or holds no chunks, so non-wiki projects pay ~0 ms per prompt.
     """
-    from wikiforge.ops.recall import parse_prompt_hook_stdin, recall_excerpts, should_recall
+    from wikiforge.ops.recall import (
+        parse_hook_session_id,
+        parse_prompt_hook_stdin,
+        recall_excerpts,
+        should_recall,
+    )
     from wikiforge.search.retriever import HybridRetriever
     from wikiforge.storage.db import DB_FILENAME
 
@@ -750,6 +755,7 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     prompt = parse_prompt_hook_stdin(hook_stdin)
     if prompt is None or not should_recall(prompt):
         return ""
+    session_id = parse_hook_session_id(hook_stdin)
     if not (home / DB_FILENAME).exists():
         return ""
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
@@ -760,7 +766,7 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
         embedder = build_embedding_provider(cfg, repo)
         await ensure_embedding_compat(repo, embedder)
         retriever = HybridRetriever(repo, embedder, cfg)
-        return await recall_excerpts(repo, retriever, embedder, cfg, prompt)
+        return await recall_excerpts(repo, retriever, embedder, cfg, prompt, session_id=session_id)
     finally:
         await db.close()
 
