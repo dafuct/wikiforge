@@ -123,6 +123,7 @@ class CaptureConfig(BaseModel):
     topic_label: str = "development-log"
     max_diff_lines: int = 200
     redact: bool = True
+    auto_digest_batches: int = 1
 
     @field_validator("summarize", mode="before")
     @classmethod

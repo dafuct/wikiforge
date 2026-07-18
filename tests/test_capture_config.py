@@ -54,6 +54,18 @@ def test_summarize_rejects_unknown_string() -> None:
         CaptureConfig(summarize="sometimes")
 
 
+def test_auto_digest_batches_default() -> None:
+    assert CaptureConfig().auto_digest_batches == 1
+
+
+def test_auto_digest_batches_parses_from_toml(tmp_path: Path) -> None:
+    (tmp_path / "config.toml").write_text(
+        'wiki_name = "x"\n[capture]\nauto_digest_batches = 0\n' + _MINIMAL_TAIL, encoding="utf-8"
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.capture.auto_digest_batches == 0
+
+
 def test_recall_defaults() -> None:
     cfg = RecallConfig()
     assert cfg.enabled is True
