@@ -34,10 +34,7 @@ class ClaudeCodeError(RuntimeError):
     """A `claude -p` invocation failed or returned an unusable result."""
 
 
-_DEFAULT_TIMEOUT_S = 300.0  # a single `claude -p` call (research + web search) can be slow
-
-
-async def _default_runner(argv: list[str], stdin_text: str) -> str:
+async def _default_runner(argv: list[str], stdin_text: str, *, timeout_s: float = 300.0) -> str:
     """Run `claude` as a subprocess, feeding the prompt on stdin; return its stdout."""
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -50,12 +47,12 @@ async def _default_runner(argv: list[str], stdin_text: str) -> str:
         raise ClaudeCodeError(f"could not launch claude: {exc}") from exc
     try:
         out, err = await asyncio.wait_for(
-            proc.communicate(stdin_text.encode()), timeout=_DEFAULT_TIMEOUT_S
+            proc.communicate(stdin_text.encode()), timeout=timeout_s
         )
     except TimeoutError:
         proc.kill()
         await proc.wait()
-        raise ClaudeCodeError(f"claude timed out after {_DEFAULT_TIMEOUT_S:.0f}s") from None
+        raise ClaudeCodeError(f"claude timed out after {timeout_s:.0f}s") from None
     if proc.returncode != 0:
         raise ClaudeCodeError(
             f"claude exited {proc.returncode}: {err.decode(errors='replace')[:500]}"
@@ -91,21 +88,28 @@ class ClaudeCodeProvider:
         """Bind to config + cost tracker; ``runner`` is injectable for offline testing."""
         self._config = config
         self._cost = cost_tracker
-        self._runner = runner or _default_runner
+        if runner is not None:
+            self._runner = runner
+        else:
+            timeout_s = config.llm.subprocess_timeout_s
 
-    def _argv(self, model_id: str, system: str, *, web_search: bool) -> list[str]:
+            async def _run_with_timeout(argv: list[str], stdin_text: str) -> str:
+                return await _default_runner(argv, stdin_text, timeout_s=timeout_s)
+
+            self._runner = _run_with_timeout
+
+    def _argv(self, model_id: str, system: str, *, web_search: bool, effort: str) -> list[str]:
         # --allowedTools is variadic (consumes until the next flag), so keep it LAST.
         tools = ["WebSearch", "WebFetch"] if web_search else [""]
-        # --effort low: Claude Code defaults to high effort, whose deep thinking makes
-        # heavy structured-output calls (compile) run for minutes and hit the timeout.
-        # Low effort keeps the subscription path responsive (compile drops from >5min to ~20s).
+        # Effort is per task ([models.effort], default low): high effort makes heavy
+        # structured-output calls (compile) exceed the subprocess timeout.
         return [
             "claude",
             "-p",
             "--output-format",
             "json",
             "--effort",
-            "low",
+            effort,
             "--model",
             _cli_model(model_id),
             "--system-prompt",
@@ -115,9 +119,11 @@ class ClaudeCodeProvider:
         ]
 
     async def _run(
-        self, model_id: str, system: str, user: str, *, web_search: bool
+        self, model_id: str, system: str, user: str, *, web_search: bool, effort: str
     ) -> dict[str, Any]:
-        raw = await self._runner(self._argv(model_id, system, web_search=web_search), user)
+        raw = await self._runner(
+            self._argv(model_id, system, web_search=web_search, effort=effort), user
+        )
         try:
             env: dict[str, Any] = json.loads(raw)
         except json.JSONDecodeError as exc:
@@ -158,7 +164,8 @@ class ClaudeCodeProvider:
     ) -> LlmResult:
         """Return a plain-text completion via `claude -p` (optionally with web search)."""
         model_id = self._config.model_for_task(purpose, tier)
-        env = await self._run(model_id, system, user, web_search=use_web_search)
+        effort = self._config.effort_for_task(purpose)
+        env = await self._run(model_id, system, user, web_search=use_web_search, effort=effort)
         await self._record(model_id, env, purpose, topic_id, session_id)
         usage = env.get("usage", {})
         return LlmResult(
@@ -181,20 +188,21 @@ class ClaudeCodeProvider:
     ) -> ParsedResult[T]:
         """Return a schema-validated completion (prompt-for-JSON, extract, validate, retry once)."""
         model_id = self._config.model_for_task(purpose, tier)
+        effort = self._config.effort_for_task(purpose)
         schema_json = json.dumps(schema.model_json_schema())
         sys_json = (
             f"{system}\n\nRespond with ONLY a single JSON object that validates against this "
             f"JSON Schema. No markdown, no code fences, no prose:\n{schema_json}"
         )
         try:
-            env = await self._run(model_id, sys_json, user, web_search=False)
+            env = await self._run(model_id, sys_json, user, web_search=False, effort=effort)
             parsed = schema.model_validate_json(_extract_json(str(env.get("result", ""))))
         except (ValidationError, ClaudeCodeError) as first_err:
             retry_user = (
                 f"{user}\n\nYour previous reply did not validate: {first_err}. "
                 "Return ONLY the corrected JSON object."
             )
-            env = await self._run(model_id, sys_json, retry_user, web_search=False)
+            env = await self._run(model_id, sys_json, retry_user, web_search=False, effort=effort)
             parsed = schema.model_validate_json(_extract_json(str(env.get("result", ""))))
         await self._record(model_id, env, purpose, topic_id, session_id)
         usage = env.get("usage", {})

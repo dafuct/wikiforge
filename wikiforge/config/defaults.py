@@ -15,15 +15,23 @@ wiki_name = "{wiki_name}"
 [models]
 cheap = "claude-haiku-4-5"
 flagship = "claude-sonnet-5"
+reasoning = "claude-opus-4-8"
 
 [models.tasks]
 extract = "cheap"
 normalize = "cheap"
 summarize = "cheap"
+capture = "cheap"
 research = "flagship"
 synthesize = "flagship"
 thesis = "flagship"
 query = "flagship"
+
+[models.effort]
+# claude -p --effort per task ("subscription" backend only; every unlisted task = low).
+# compile stays low: high effort makes its structured-output call exceed the timeout.
+thesis = "medium"
+synthesize = "medium"
 
 [pricing."claude-haiku-4-5"]
 input = 1.0
@@ -32,6 +40,10 @@ output = 5.0
 [pricing."claude-sonnet-5"]
 input = 3.0
 output = 15.0
+
+[pricing."claude-opus-4-8"]
+input = 5.0
+output = 25.0
 
 [pricing."voyage-3.5"]
 input = 0.06
@@ -79,6 +91,7 @@ conflict_penalty_cap = 0.4
 # "api" = Anthropic developer API (needs an API key / credits from console.anthropic.com).
 # "subscription" = Claude Code CLI (`claude -p`), uses your Claude subscription (no API credits).
 backend = "api"
+subprocess_timeout_s = 300   # per-call `claude -p` timeout; raise it for high-effort tasks
 
 [capture]
 auto = true                # auto-capture when a Claude Code task changed files

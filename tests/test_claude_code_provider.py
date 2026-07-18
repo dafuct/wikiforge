@@ -152,3 +152,28 @@ async def test_runner_error_surfaces(wiki_home: Path) -> None:
             await provider.complete("query", "SYS", "USER")
     finally:
         await db.close()
+
+
+async def test_argv_effort_and_model_follow_task_maps(wiki_home: Path) -> None:
+    write_default_config(wiki_home, wiki_name="T")
+    cfg = load_config(wiki_home)
+    captured: list[list[str]] = []
+
+    async def runner(argv: list[str], stdin: str) -> str:
+        captured.append(argv)
+        return _envelope("ok")
+
+    db = await Database.open(wiki_home, dim=4)
+    await db.init_schema()
+    repo = Repository(db)
+    provider = ClaudeCodeProvider(cfg, CostTracker(repo, cfg), runner=runner)
+    try:
+        await provider.complete("capture", "sys", "user")
+        await provider.complete("thesis", "sys", "user")
+    finally:
+        await db.close()
+    low, medium = captured
+    assert low[low.index("--effort") + 1] == "low"
+    assert low[low.index("--model") + 1] == "haiku"       # capture -> cheap tier
+    assert medium[medium.index("--effort") + 1] == "medium"
+    assert medium[medium.index("--model") + 1] == "sonnet"  # thesis -> flagship by default

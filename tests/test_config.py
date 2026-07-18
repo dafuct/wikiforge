@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from wikiforge.config.settings import Config, load_config, write_default_config
 from wikiforge.paths import resolve_home
 
@@ -63,3 +65,39 @@ def test_personas_for_mode(wiki_home: Path) -> None:
     assert len(cfg.personas_for_mode("standard")) == 5
     assert len(cfg.personas_for_mode("deep")) == 8
     assert len(cfg.personas_for_mode("max")) == 10
+
+
+def _cfg(tmp_path) -> Config:
+    write_default_config(tmp_path, wiki_name="T")
+    return load_config(tmp_path)
+
+
+def test_reasoning_tier_resolves_and_unknown_tier_raises(tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    assert cfg.models.reasoning == "claude-opus-4-8"
+    cfg.models.tasks["thesis"] = "reasoning"
+    assert cfg.model_for_task("thesis") == "claude-opus-4-8"
+    assert cfg.model_for_task("thesis", tier="cheap") == cfg.models.cheap  # override still wins
+    cfg.models.tasks["thesis"] = "banana"
+    with pytest.raises(ValueError, match="unknown model tier"):
+        cfg.model_for_task("thesis")
+
+
+def test_reasoning_tier_without_model_raises(tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    cfg = cfg.model_copy(update={"models": cfg.models.model_copy(update={"reasoning": None})})
+    cfg.models.tasks["thesis"] = "reasoning"
+    with pytest.raises(ValueError, match="reasoning"):
+        cfg.model_for_task("thesis")
+
+
+def test_effort_for_task_defaults_low_with_template_overrides(tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    assert cfg.effort_for_task("capture") == "low"
+    assert cfg.effort_for_task("compile") == "low"      # MUST stay low (timeout fix)
+    assert cfg.effort_for_task("thesis") == "medium"
+    assert cfg.effort_for_task("synthesize") == "medium"
+
+
+def test_subprocess_timeout_default(tmp_path) -> None:
+    assert _cfg(tmp_path).llm.subprocess_timeout_s == 300.0
