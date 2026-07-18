@@ -98,6 +98,48 @@ async def test_flush_digests_applies_summary_to_provenance_and_index(tmp_path: P
         await db.close()
 
 
+async def test_flush_max_batches_caps_llm_calls(tmp_path: Path) -> None:
+    db, repo, cfg = await _wiki(tmp_path)
+    try:
+        ids = [await _pending_event(repo, cfg, request=_LONG + str(i)) for i in range(3)]
+        llm = _BatchLLM(BatchDigestOut(items=[
+            BatchDigestItem(id=i, summary="s", type="chore") for i in ids
+        ]))
+        stats = await flush_dev_events(
+            repo, DimEmbedder(), llm, cfg, digests=True, batch_size=1, max_batches=2
+        )
+        assert llm.calls == 2
+        assert stats.digested_events == 2
+        assert stats.pending_left == 1
+    finally:
+        await db.close()
+
+
+async def test_run_capture_flush_auto_digests_by_default(tmp_path: Path, monkeypatch) -> None:
+    import wikiforge.services as services
+    from wikiforge.services import run_capture_flush
+
+    home = tmp_path / "wiki"
+    home.mkdir()
+    (home / "topics").mkdir()
+    write_default_config(home, wiki_name="T")
+    db = await Database.open(home, dim=4)
+    await db.init_schema()
+    repo = Repository(db)
+    cfg = load_config(home)
+    sid = await _pending_event(repo, cfg)
+    await db.close()
+
+    llm = _BatchLLM(BatchDigestOut(items=[BatchDigestItem(id=sid, summary="s", type="chore")]))
+    monkeypatch.setattr(services, "build_llm_provider", lambda cfg, tracker: llm)
+    monkeypatch.setattr(
+        services, "build_embedding_provider", lambda cfg, repo, **kw: DimEmbedder()
+    )
+    monkeypatch.setattr(services, "effective_embedding_dim", lambda cfg, **kw: 4)
+    stats = await run_capture_flush(home, digests=False)   # SessionStart shape
+    assert stats.digested_events == 1                      # auto_digest_batches=1 kicked in
+
+
 async def test_flush_salvages_partial_batch(tmp_path: Path) -> None:
     db, repo, cfg = await _wiki(tmp_path)
     try:

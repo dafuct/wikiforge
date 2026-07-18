@@ -98,6 +98,7 @@ async def flush_dev_events(
     *,
     digests: bool,
     batch_size: int = 25,
+    max_batches: int | None = None,
 ) -> FlushStats:
     """Backfill dev-log vectors (always); with ``digests`` also batch-summarize.
 
@@ -105,11 +106,15 @@ async def flush_dev_events(
     per-event input capped at ``_EVENT_TEXT_CAP`` chars. Items whose id is unknown
     or whose type is off-vocabulary are skipped (per-item salvage); a round that
     applies nothing stops the loop so a misbehaving model can't spin forever.
+
+    ``max_batches`` caps the number of LLM calls (the SessionStart auto-digest
+    budget); ``None`` drains the backlog (the manual ``--digests`` path).
     """
     embedded = await _backfill_vectors(repo, embedder)
     digested = 0
+    batches = 0
     if digests and llm is not None:
-        while True:
+        while max_batches is None or batches < max_batches:
             events = await repo.dev_events_pending_digest(limit=batch_size)
             if not events:
                 break
@@ -124,6 +129,7 @@ async def flush_dev_events(
                 )
             except Exception:
                 break
+            batches += 1
             by_id = {e.id: e for e in events if e.id is not None}
             applied = 0
             for item in result.parsed.items:

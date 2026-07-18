@@ -25,6 +25,7 @@ from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.ingest import sources as ingest_sources
 from wikiforge.lint.auditor import AuditFinding, WikiAuditor
 from wikiforge.lint.linter import LintFinding, WikiLinter
+from wikiforge.llm.factory import build_llm_provider
 from wikiforge.models.domain import (
     Article,
     Dataset,
@@ -259,7 +260,6 @@ async def run_research(
     is forwarded to the orchestrator for live progress (default: no-op).
     """
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.llm.factory import build_llm_provider
     from wikiforge.research.orchestrator import ResearchOrchestrator
     from wikiforge.research.volatility import infer_volatility
 
@@ -307,7 +307,6 @@ async def run_thesis(
     :meth:`~wikiforge.research.orchestrator.ResearchOrchestrator.evaluate_thesis`.
     """
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.llm.factory import build_llm_provider
     from wikiforge.research.orchestrator import ResearchOrchestrator
 
     cfg = load_config(home)
@@ -332,7 +331,6 @@ async def run_compile(home: Path, *, full: bool) -> list[Article]:
     """
     from wikiforge.activity.cost import CostTracker
     from wikiforge.compile.compiler import Compiler
-    from wikiforge.llm.factory import build_llm_provider
 
     cfg = load_config(home)
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
@@ -398,7 +396,6 @@ async def run_query(home: Path, query: str, *, depth: str, scope: str = "all") -
     and wired in as the reranker; ``quick``/``standard`` queries never load it.
     """
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.llm.factory import build_llm_provider
     from wikiforge.query.service import answer_query
     from wikiforge.search.retriever import HybridRetriever
 
@@ -451,7 +448,6 @@ async def run_generate(home: Path, kind: str, topic: str, *, out: Path | None) -
     topic, an invalid kind, or a topic with no compiled article.
     """
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.llm.factory import build_llm_provider
 
     output_kind = OutputKind(kind)  # raises ValueError on a bad kind
     cfg = load_config(home)
@@ -550,7 +546,6 @@ async def run_refresh(home: Path, *, run: bool) -> list[Topic]:
             return await stale_topics(repo, now=now)
 
         from wikiforge.activity.cost import CostTracker
-        from wikiforge.llm.factory import build_llm_provider
         from wikiforge.research.orchestrator import ResearchOrchestrator
 
         llm = build_llm_provider(cfg, CostTracker(repo, cfg))
@@ -672,7 +667,6 @@ async def run_capture_note(home: Path, note: str, *, event_type: str | None) -> 
     from datetime import UTC, datetime
 
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.llm.factory import build_llm_provider
     from wikiforge.ops.capture import capture_event
 
     if not (home / CONFIG_FILENAME).exists():
@@ -698,7 +692,6 @@ async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
     from datetime import UTC, datetime
 
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.llm.factory import build_llm_provider
     from wikiforge.ops.capture import (
         capture_event,
         extract_turn,
@@ -774,7 +767,6 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
 async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
     """Backfill dev-log vectors; with ``digests`` also batch-summarize pending events."""
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.llm.factory import build_llm_provider
     from wikiforge.ops.flush import flush_dev_events
 
     if not (home / CONFIG_FILENAME).exists():
@@ -786,12 +778,18 @@ async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
         tracker = CostTracker(repo, cfg)
         embedder = build_embedding_provider(cfg, repo, cost_tracker=tracker)
         await ensure_embedding_compat(repo, embedder)
+        auto_batches = cfg.capture.auto_digest_batches
+        want_digests = digests or auto_batches > 0
         llm = None
-        if digests:
+        if want_digests:
             try:
                 llm = build_llm_provider(cfg, tracker)
             except Exception:
                 llm = None
-        return await flush_dev_events(repo, embedder, llm, cfg, digests=digests)
+        return await flush_dev_events(
+            repo, embedder, llm, cfg,
+            digests=want_digests,
+            max_batches=None if digests else auto_batches,
+        )
     finally:
         await db.close()
