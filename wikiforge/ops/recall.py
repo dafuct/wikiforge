@@ -9,6 +9,7 @@ from wikiforge.config.settings import Config
 from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.query.service import render_excerpts
 from wikiforge.search.retriever import HybridRetriever
+from wikiforge.search.rrf import ChunkTarget
 from wikiforge.storage.repository import Repository
 
 _MIN_PROMPT_CHARS = 20
@@ -44,6 +45,24 @@ def _dot(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b, strict=True))
 
 
+def _recency_weight(target: ChunkTarget, *, now: datetime, half_life_days: float) -> float:
+    """Exponential freshness weight for DEV_EVENT chunks; 1.0 for everything else.
+
+    Admission stays on raw similarity — this only reorders the admitted set, so
+    a stale-but-relevant event still passes the gate, it just loses ties.
+    """
+    if half_life_days <= 0 or target.owner_source_type != "dev_event" or not target.owner_ts:
+        return 1.0
+    try:
+        ts = datetime.fromisoformat(target.owner_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return 1.0
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    age_days = max(0.0, (now - ts).total_seconds() / 86400.0)
+    return float(0.5 ** (age_days / half_life_days))
+
+
 async def recall_excerpts(
     repo: Repository,
     retriever: HybridRetriever,
@@ -75,12 +94,13 @@ async def recall_excerpts(
     scored = [
         (_dot(prompt_vec, stored[t.rowid]), t) for t in targets if t.rowid in stored
     ]
+    now = now or datetime.now(UTC)
     kept = sorted(
         ((sim, t) for sim, t in scored if sim >= cfg.recall.min_similarity),
-        key=lambda pair: pair[0],
+        key=lambda pair: pair[0]
+        * _recency_weight(pair[1], now=now, half_life_days=cfg.recall.devlog_half_life_days),
         reverse=True,
     )
-    now = now or datetime.now(UTC)
     dedup = cfg.recall.dedup and session_id is not None
     if dedup:
         assert session_id is not None

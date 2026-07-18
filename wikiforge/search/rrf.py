@@ -16,6 +16,8 @@ class ChunkTarget:
     text: str
     topic_id: int | None
     topic_status: str | None
+    owner_ts: str | None = None
+    owner_source_type: str | None = None
 
 
 def reciprocal_rank_fusion(

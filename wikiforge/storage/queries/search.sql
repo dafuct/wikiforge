@@ -39,8 +39,11 @@ ORDER BY v.distance;
 
 -- name: chunk_target^
 SELECT c.rowid AS rowid, c.owner_type AS owner_type, c.owner_id AS owner_id, c.seq AS seq, c.text AS text,
-       t.id AS topic_id, t.status AS topic_status
+       t.id AS topic_id, t.status AS topic_status,
+       COALESCE(json_extract(rs.provenance, '$.ts'), rs.fetched_at) AS owner_ts,
+       rs.source_type AS owner_source_type
 FROM chunks c
 LEFT JOIN articles a ON c.owner_type = 'article' AND a.id = c.owner_id
 LEFT JOIN topics t ON t.id = a.topic_id
+LEFT JOIN raw_sources rs ON c.owner_type = 'raw_source' AND rs.id = c.owner_id
 WHERE c.rowid = :rowid;

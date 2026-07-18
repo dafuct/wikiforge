@@ -143,6 +143,7 @@ class RecallConfig(BaseModel):
     max_chars: int = 600
     min_similarity: float = 0.80
     dedup: bool = True
+    devlog_half_life_days: float = 14.0
 
 
 class Config(BaseModel):

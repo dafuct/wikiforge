@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 from wikiforge.config.settings import RecallConfig
 from wikiforge.ops.recall import (
@@ -205,3 +206,32 @@ async def test_recall_seen_chunk_does_not_consume_a_slot() -> None:
     assert "we hit a deadlock in the bridge" not in out
     # Only the 3 unseen chunks should be logged
     assert repo.logged == [("raw_source", 5, 1), ("raw_source", 5, 2), ("raw_source", 5, 3)]
+
+
+async def test_recall_orders_devlog_by_recency_weighted_similarity() -> None:
+    from wikiforge.config.settings import RecallConfig
+
+    class _OneSlot:
+        recall = RecallConfig(max_excerpts=1)
+
+    old = _target("deadlock note from three weeks ago", 1)
+    old.owner_ts = "2026-06-27T00:00:00Z"
+    old.owner_source_type = "dev_event"
+    fresh = _target("deadlock note from yesterday", 2, seq=1)
+    fresh.owner_ts = "2026-07-17T00:00:00Z"
+    fresh.owner_source_type = "dev_event"
+    repo = _VecRepo({1: [1.0, 0.0, 0.0, 0.0], 2: [1.0, 0.0, 0.0, 0.0]})  # equal similarity
+    out = await recall_excerpts(
+        repo, _StubRetriever([old, fresh]), _CountingEmbedder(), _OneSlot(),
+        "why the deadlock in the bridge?",
+        now=datetime(2026, 7, 18, tzinfo=UTC),
+    )
+    assert "yesterday" in out and "three weeks" not in out
+
+
+async def test_articles_are_not_decayed() -> None:
+    from wikiforge.ops.recall import _recency_weight
+
+    art = _target("article text", 1)
+    art.owner_source_type = None
+    assert _recency_weight(art, now=datetime(2026, 7, 18, tzinfo=UTC), half_life_days=14) == 1.0

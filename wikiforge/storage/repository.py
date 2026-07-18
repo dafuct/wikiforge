@@ -839,6 +839,8 @@ class Repository:
                     text=row["text"],
                     topic_id=row["topic_id"],
                     topic_status=row["topic_status"],
+                    owner_ts=row["owner_ts"],
+                    owner_source_type=row["owner_source_type"],
                 )
             )
         return targets
