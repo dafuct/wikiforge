@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from wikiforge.models.domain import ActivityEntry, LlmCall, RawSource, Topic
+from wikiforge.models.domain import ActivityEntry, Article, LlmCall, RawSource, Topic
 from wikiforge.models.enums import SourceType, Volatility
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
@@ -97,6 +97,41 @@ async def _dev_event(repo, text: str, *, pending: bool) -> int:
     )
     source_id, _ = await repo.ingest_raw_source(src)
     return source_id
+
+
+async def test_chunk_targets_populates_owner_ts_and_source_type(db_repo) -> None:
+    db, repo = db_repo
+    src = RawSource(
+        content_hash="h-recency", source_type=SourceType.DEV_EVENT,
+        title="Dev event", text="dev event chunk text",
+        fetched_at=datetime(2026, 7, 15, tzinfo=UTC),
+        provenance={"ts": "2026-07-01T00:00:00Z"},
+    )
+    sid, _ = await repo.ingest_raw_source(src)
+    rowid = await repo.insert_chunk(
+        owner_type="raw_source", owner_id=sid, seq=0, text="dev event chunk text",
+        content_hash="c-dev",
+    )
+
+    topic_id = await repo.upsert_topic(
+        Topic(slug="art-topic", title="Art Topic", stale_after_days=90)
+    )
+    article = Article(
+        topic_id=topic_id, slug="art-topic", title="Art Topic", body_md="article body",
+        path="art-topic.md", confidence=0.9, compile_digest="d1", version=1,
+    )
+    article_id = await repo.insert_article(article)
+    art_rowid = await repo.insert_chunk(
+        owner_type="article", owner_id=article_id, seq=0, text="article body",
+        content_hash="c-art",
+    )
+
+    [dev_target] = await repo.chunk_targets([rowid])
+    assert dev_target.owner_ts == "2026-07-01T00:00:00Z"
+    assert dev_target.owner_source_type == "dev_event"
+
+    [art_target] = await repo.chunk_targets([art_rowid])
+    assert art_target.owner_ts is None
 
 
 async def test_chunks_missing_vectors_lists_unembedded(db_repo) -> None:
