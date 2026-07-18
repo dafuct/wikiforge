@@ -550,6 +550,28 @@ def recall(
         typer.echo(f"recall failed: {exc}", err=True)
 
 
+@app.command()
+def consolidate(
+    home: str | None = HomeOption,
+    if_auto: bool = typer.Option(
+        False, "--if-auto", help="Run only when [consolidate] auto = true (SessionStart hook)."
+    ),
+) -> None:
+    """Roll old dev-log events into the versioned development-log article."""
+    try:
+        from wikiforge.paths import resolve_capture_home
+        from wikiforge.services import run_consolidate
+
+        stats = asyncio.run(run_consolidate(resolve_capture_home(home), only_if_auto=if_auto))
+        if not if_auto:
+            typer.echo(f"Consolidated {stats.events} event(s) into {stats.periods} period(s)")
+    except Exception as exc:
+        if if_auto:
+            return  # SessionStart entry must never break the session
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+
+
 def main() -> None:
     """Console-script entry point."""
     app()

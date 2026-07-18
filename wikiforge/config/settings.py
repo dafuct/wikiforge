@@ -134,6 +134,16 @@ class CaptureConfig(BaseModel):
         return value
 
 
+class ConsolidateConfig(BaseModel):
+    """Dev-log consolidation: rollups of old events into the development-log article."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period: Literal["week", "month"] = "week"
+    min_age_days: int = 14
+    auto: bool = False
+
+
 class RecallConfig(BaseModel):
     """UserPromptSubmit recall-hook settings (zero-LLM memory injection)."""
 
@@ -164,6 +174,7 @@ class Config(BaseModel):
     llm: LlmConfig = LlmConfig()
     capture: CaptureConfig = CaptureConfig()
     recall: RecallConfig = RecallConfig()
+    consolidate: ConsolidateConfig = ConsolidateConfig()
 
     def model_for_task(self, task: str, tier: str | None = None) -> str:
         """Resolve a task (and optional explicit tier override) to a model ID.

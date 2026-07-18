@@ -235,3 +235,12 @@ async def test_articles_are_not_decayed() -> None:
     art = _target("article text", 1)
     art.owner_source_type = None
     assert _recency_weight(art, now=datetime(2026, 7, 18, tzinfo=UTC), half_life_days=14) == 1.0
+
+
+async def test_recall_excludes_consolidated_devlog_chunks() -> None:
+    t = _target("we hit a deadlock in the bridge", 1)
+    t.owner_source_type = "dev_event"
+    t.consolidated = "2026-W27"
+    out = await recall_excerpts(_VecRepo({1: [1.0, 0.0, 0.0, 0.0]}), _StubRetriever([t]),
+                                _CountingEmbedder(), _Cfg(), "why the deadlock in the bridge?")
+    assert out == ""

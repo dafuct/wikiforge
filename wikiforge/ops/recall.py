@@ -90,6 +90,12 @@ async def recall_excerpts(
     )
     if not targets:
         return ""
+    targets = [
+        t for t in targets
+        if not (t.owner_source_type == "dev_event" and t.consolidated is not None)
+    ]
+    if not targets:
+        return ""
     stored = await repo.chunk_vectors([t.rowid for t in targets])
     scored = [
         (_dot(prompt_vec, stored[t.rowid]), t) for t in targets if t.rowid in stored

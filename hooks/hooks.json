@@ -14,6 +14,10 @@
           },
           {
             "type": "command",
+            "command": "command -v wiki >/dev/null 2>&1 && wiki consolidate --if-auto >/dev/null 2>&1; true"
+          },
+          {
+            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/viewer-autostart.sh\" >/dev/null 2>&1; true"
           }
         ]
