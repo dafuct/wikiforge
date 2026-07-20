@@ -768,10 +768,13 @@ async def run_capture_subagent(home: Path, hook_stdin: str) -> RawSource | None:
     if transcript_path is None:
         return None
     session_id = parse_hook_session_id(hook_stdin)
+    parent_raw = None
     try:
-        parent = json.loads(hook_stdin).get("parent_session_id")
+        parsed = json.loads(hook_stdin)
+        parent_raw = parsed.get("parent_session_id") if isinstance(parsed, dict) else None
     except (ValueError, TypeError):
-        parent = None
+        parent_raw = None
+    parent = parent_raw if isinstance(parent_raw, str) and parent_raw else None
     entries = read_transcript(Path(transcript_path))
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:

@@ -272,7 +272,10 @@ async def capture_event(
     ``default_type``. Indexing is best-effort — the source is persisted even if it fails.
     ``extra_provenance`` lets a surface (e.g. SubagentStop's ``parent_session_id``)
     attach fields to the provenance dict without this function growing per-surface
-    branches.
+    branches. Precedence is fixed: ``extra_provenance`` may only ADD fields, never
+    override — it is spread first (as a base), so the core capture fields (``type``,
+    ``files``, ``ts``, ``origin``, ``label``) and the git context (``branch``,
+    ``head_sha``, ``worktree``) are always written over it and win on any key clash.
     """
     if cfg.capture.redact:
         request = redact_secrets(request)
@@ -308,13 +311,13 @@ async def capture_event(
         text=note,
         fetched_at=now,
         provenance={
+            **(extra_provenance or {}),
             "type": resolved_type,
             "files": ",".join(files),
             "ts": ts,
             "origin": origin,
             "label": cfg.capture.topic_label,
             **git_meta,
-            **(extra_provenance or {}),
             **({"digest": "pending"} if digest_pending else {}),
         },
     )
