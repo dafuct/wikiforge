@@ -176,9 +176,36 @@ It captures **uncommitted** work, so you never have to commit for the wiki to re
   chunk already shown this session), `devlog_half_life_days` (default 14 — fresher dev events outrank
   staler ones at equal relevance; `0` disables), and `routing_hint` (default `false` — append a
   zero-LLM task-type hint for an orchestrator's model-routing policy; a hook cannot switch the active
-  session's model, so it is a hint only).
+  session's model, so it is a hint only), and `annotate` (default `true` — prefix each excerpt with its
+  epistemic status, e.g. `(article · confidence 0.61 · researched 42d ago · HIGH volatility)` or
+  `(dev event · 3d ago · bugfix)`, so the agent knows how far to trust it; missing fields are omitted,
+  never guessed).
 - **Privacy / control:** the raw request is stored (best-effort secret redaction). Turn capture
   off with `[capture] auto = false`, or raw-only with `summarize = "off"`, in `config.toml`.
+
+### Why is this code the way it is?
+
+`git blame` tells you *who* changed a line and *when*. wikiforge answers *why* — because the dev log
+already records the reasoning behind every change, indexed by the files it touched.
+
+```bash
+wiki why wikiforge/ops/recall.py      # decision history for a file, newest first
+wiki why src/api/routes.py --limit 10
+```
+
+Matching accepts an absolute path or any `/`-anchored suffix (`recall.py`, `ops/recall.py`, the full
+path). A `path:line` argument is accepted and the line part is honestly ignored — attribution is
+file-level until hunk capture lands. Agents get the same data through the MCP tool `why_file`, sealed
+as untrusted data to synthesize from. Both paths are **zero-LLM** — pure SQL, no model is ever loaded.
+
+**The guardrail.** A `PreToolUse` hook (`wiki why --hook`, default **on**) runs before the agent edits
+a file and, when that file carries decision history, hands the agent the past reasoning — so it doesn't
+silently undo a decision it can't remember. It **only informs, never blocks**: it always returns an
+`allow` decision and delivers the note as `additionalContext` (plain hook stdout would reach only Claude
+Code's debug log, never the model — verified against Claude Code 2.1.207). Tuning lives under `[why]`:
+`guardrail` (default `true`), `guardrail_types` (default `["bugfix", "design", "spec", "research"]` —
+`chore`/`docs` are excluded so routine edits stay quiet), and `guardrail_max_events` (default 2). Each
+file warns at most once per session, and the whole lookup is pure SQL.
 
 ---
 
@@ -247,6 +274,12 @@ local_dim = 384               # vector dim when using local
 
 [recall]                      # UserPromptSubmit memory injection (see "Agent memory")
 min_similarity = 0.80         # e5-small gate; dedup, devlog_half_life_days, routing_hint also here
+annotate = true               # prefix excerpts with confidence / staleness / event type
+
+[why]                         # decision memory (see "Why is this code the way it is?")
+guardrail = true              # PreToolUse: warn before editing a file with decision history
+guardrail_types = ["bugfix", "design", "spec", "research"]   # types worth interrupting for
+guardrail_max_events = 2      # max past decisions quoted per warning
 
 [capture]
 auto_digest_batches = 1       # SessionStart flush: max cheap digest batches (0 = off)

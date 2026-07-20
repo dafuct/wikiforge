@@ -35,7 +35,7 @@ On the first session after install, a background hook runs `uv tool install` to 
 
 ## Automatic hooks
 
-The plugin wires three Claude Code hooks (all fail-safe — they never break a session):
+The plugin wires four Claude Code hooks (all fail-safe — they never break a session):
 
 - **`SessionStart`** — ensures the `wiki` CLI is installed, then `wiki capture --flush`: backfills
   dev-log vectors (free) and drains up to `[capture] auto_digest_batches` pending digests (default 1
@@ -46,6 +46,11 @@ The plugin wires three Claude Code hooks (all fail-safe — they never break a s
 - **`UserPromptSubmit`** — `wiki recall --hook`: injects the most relevant wiki/dev-log excerpts into
   the session. Zero LLM, multilingual, recency-weighted, and deduplicated within the session; it exits
   immediately for a project with no knowledge base yet.
+- **`PreToolUse`** (`Edit|Write|MultiEdit|NotebookEdit`) — `wiki why --hook`: before the agent edits a
+  file that carries decision history, hands it the past reasoning so it doesn't unknowingly undo a
+  prior decision. Zero LLM (pure SQL), at most one warning per file per session, and **allow-only** —
+  it informs via `additionalContext` and never blocks or gates the edit. Turn it off with
+  `[why] guardrail = false`.
 
 ## Commands
 
