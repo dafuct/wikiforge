@@ -88,3 +88,46 @@ def test_cli_hook_is_failsafe(monkeypatch, tmp_path: Path) -> None:
         app, ["why", "--hook", "--home", str(tmp_path)], input="{}"
     )
     assert result.exit_code == 0
+
+
+async def test_zero_max_events_yields_no_warning_and_no_dedup_row(tmp_path: Path) -> None:
+    home = await _seeded_home(tmp_path)  # request infers type=bugfix (decision-carrying)
+    # Set guardrail_max_events = 0 upfront
+    toml = (home / "config.toml").read_text()
+    toml = toml.replace("guardrail_max_events = 2", "guardrail_max_events = 0")
+    (home / "config.toml").write_text(toml)
+
+    # First call with max_events=0 should not warn and should not write dedup row
+    result = await run_why_hook(home, _payload())
+    assert result == ""
+
+    # Now change back to guardrail_max_events = 2
+    toml = (home / "config.toml").read_text()
+    toml = toml.replace("guardrail_max_events = 0", "guardrail_max_events = 2")
+    (home / "config.toml").write_text(toml)
+
+    # Same payload should now warn (dedup row was not written when max_events=0)
+    second = await run_why_hook(home, _payload())
+    assert second.startswith(WHY_HEADER)
+
+
+async def test_render_warning_empty_when_capped_to_zero() -> None:
+    from datetime import UTC, datetime
+
+    from wikiforge.models.domain import RawSource
+    from wikiforge.models.enums import SourceType
+    from wikiforge.ops.why import render_warning
+
+    event = RawSource(
+        id=1,
+        title="test event",
+        text="test content",
+        content_hash="hash123",
+        source_type=SourceType.DEV_EVENT,
+        provenance={"type": "bugfix"},
+        fetched_at=datetime.now(UTC),
+    )
+
+    # With max_events=0, should return ""
+    result = render_warning([event], max_events=0)
+    assert result == ""
