@@ -10,6 +10,8 @@ from typer.testing import CliRunner
 
 from wikiforge.cli.app import app
 from wikiforge.config.settings import load_config, write_default_config
+from wikiforge.models.domain import RawSource
+from wikiforge.models.enums import SourceType
 from wikiforge.ops.capture import capture_event
 from wikiforge.ops.why import WHY_HEADER, parse_pretool_stdin
 from wikiforge.services import run_why_hook
@@ -176,8 +178,39 @@ async def test_guardrail_warns_on_change_typed_events(tmp_path: Path) -> None:
     assert (await run_why_hook(home, _payload())).startswith(WHY_HEADER)
 
 
-async def test_guardrail_stays_quiet_for_excluded_types(tmp_path: Path) -> None:
+async def test_guardrail_stays_quiet_for_chore_and_docs_types(tmp_path: Path) -> None:
     home = await _seeded_home(tmp_path, event_type="chore", request="bump deps")
     assert await run_why_hook(home, _payload()) == ""
     home_docs = await _seeded_home(tmp_path / "d", event_type="docs", request="update readme")
     assert await run_why_hook(home_docs, _payload()) == ""
+
+
+async def test_hook_warns_when_provenance_has_no_type_key(tmp_path: Path) -> None:
+    """A provenance dict with no "type" key at all must still warn.
+
+    ``capture_event`` always resolves and writes a concrete type, so this gap
+    can only arise from data that didn't go through it (a pre-existing event,
+    a direct ingest). The event is decision-carrying by default — the ``or
+    "change"`` fallback in ``run_why_hook`` must treat it as "change" and the
+    guardrail must warn, exactly as it does for an explicit change-typed event.
+    """
+    home = tmp_path / "wiki"
+    home.mkdir(parents=True)
+    (home / "topics").mkdir()
+    write_default_config(home, wiki_name="T")
+    db = await Database.open(home, dim=4)
+    await db.init_schema()
+    try:
+        repo = Repository(db)
+        src = RawSource(
+            content_hash="h-no-type", source_type=SourceType.DEV_EVENT,
+            title="Dev event with no type", text="note /proj/bridge.py", fetched_at=_NOW,
+            provenance={"ts": _NOW.strftime("%Y-%m-%dT%H:%M:%SZ"), "files": "/proj/bridge.py"},
+        )
+        await repo.ingest_raw_source(src)
+        await repo.ensure_dev_event_files()
+    finally:
+        await db.close()
+
+    result = await run_why_hook(home, _payload())
+    assert result.startswith(WHY_HEADER)

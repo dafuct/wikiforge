@@ -159,18 +159,22 @@ class WhyConfig(BaseModel):
     guardrail_types: list[str] | None = None
     guardrail_max_events: int = 2
 
-    def excluded_types(self) -> set[str]:
-        """Event types the guardrail stays quiet about.
+    def warns_for(self, event_type: str) -> bool:
+        """Whether the guardrail should surface an event of this type.
 
-        The exclude-list wins when both keys are set. A lone legacy whitelist is
-        honoured by excluding everything outside it, so an existing config keeps
-        its current behaviour until the key is removed.
+        Two semantics, resolved by precedence:
+
+        * ``guardrail_exclude_types`` (current): warn unless the type is listed.
+          An explicitly-set value always wins.
+        * ``guardrail_types`` (deprecated whitelist): warn ONLY for listed types.
+          Expressed as a predicate rather than a set of exclusions because
+          "everything except these" is unbounded — a custom type from
+          ``wiki capture --type`` must stay silent under a legacy config, exactly
+          as it did before the exclude-list existed.
         """
         if "guardrail_exclude_types" in self.model_fields_set or self.guardrail_types is None:
-            return set(self.guardrail_exclude_types)
-        known = {"feature", "bugfix", "research", "refactor", "spec", "design", "docs", "chore",
-                 "change"}
-        return known - set(self.guardrail_types)
+            return event_type not in self.guardrail_exclude_types
+        return event_type in self.guardrail_types
 
 
 class RecallConfig(BaseModel):
