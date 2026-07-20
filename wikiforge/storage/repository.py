@@ -68,6 +68,16 @@ class CitationSource:
     source_text: str
 
 
+def _like_escape(value: str) -> str:
+    """Escape LIKE metacharacters so a path matches literally, not as a pattern.
+
+    ``_`` and ``%`` are LIKE wildcards; Python paths contain ``_`` routinely
+    (``test_capture.py`` would otherwise match ``testXcapture.py``). The
+    backslash escape must be escaped first so it can't double-escape.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class Repository:
     """Marshals domain records to/from the named SQL queries."""
 
@@ -956,10 +966,16 @@ class Repository:
         """Return dev events that touched ``path``, newest first.
 
         Matches the stored (absolute) path exactly, or as a ``/``-anchored
-        suffix — so ``a.py`` never matches ``data.py``.
+        suffix — so ``a.py`` never matches ``data.py``. The suffix match is
+        literal: ``path`` is escaped (see :func:`_like_escape`) before use as
+        a LIKE pattern, so LIKE wildcards in a path (``_``, ``%``) can't
+        broaden the match — ``test_capture.py`` never matches
+        ``testXcapture.py``.
         """
         out: list[RawSource] = []
-        async for row in self._q.dev_events_for_path(self._db.conn, path=path, limit=limit):
+        async for row in self._q.dev_events_for_path(
+            self._db.conn, path=path, path_pattern=_like_escape(path), limit=limit
+        ):
             out.append(
                 RawSource(
                     id=row["id"],

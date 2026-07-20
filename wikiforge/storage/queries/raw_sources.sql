@@ -49,6 +49,6 @@ SELECT rs.id, rs.content_hash, rs.canonical_url, rs.source_type, rs.title, rs.te
        rs.fetched_at, rs.first_seen_session_id, rs.persona, rs.provenance
 FROM dev_event_files def
 JOIN raw_sources rs ON rs.id = def.source_id
-WHERE def.path = :path OR def.path LIKE '%/' || :path
+WHERE def.path = :path OR def.path LIKE '%/' || :path_pattern ESCAPE '\'
 ORDER BY rs.id DESC
 LIMIT :limit;
