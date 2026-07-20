@@ -6,9 +6,7 @@ import json
 import re
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -20,10 +18,26 @@ from wikiforge.llm.provider import LLMProvider
 from wikiforge.llm.safety import seal_source_data
 from wikiforge.models.domain import RawSource
 from wikiforge.models.enums import SourceType
+from wikiforge.ops.transcript import (
+    EDIT_TOOLS,
+    Turn,
+    iter_turns,
+    read_transcript,
+)
 from wikiforge.search.index import index_owner_fts
 from wikiforge.storage.repository import Repository
 
-EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+# EDIT_TOOLS, Turn, and read_transcript live in wikiforge.ops.transcript now; listing
+# them here makes the re-export explicit for `mypy --strict` (no_implicit_reexport)
+# and documents that services.py and existing tests may keep importing them from
+# this module.
+__all__ = [
+    "EDIT_TOOLS",
+    "Turn",
+    "read_transcript",
+    "extract_turn",
+    "parse_hook_stdin",
+]
 
 _SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
@@ -109,82 +123,14 @@ def parse_hook_stdin(raw: str) -> str | None:
     return path if isinstance(path, str) and path else None
 
 
-def read_transcript(path: Path) -> list[dict[str, Any]]:
-    """Read a JSONL transcript into a list of dicts, tolerating blank/bad lines."""
-    try:
-        raw_bytes = path.read_bytes()
-    except OSError:
-        return []
-    out: list[dict[str, Any]] = []
-    for line_bytes in raw_bytes.split(b"\n"):
-        try:
-            line = line_bytes.decode("utf-8").strip()
-        except UnicodeDecodeError:
-            continue
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(obj, dict):
-            out.append(obj)
-    return out
-
-
-@dataclass
-class Turn:
-    """The triggering request and the files edited during the latest human turn."""
-
-    request: str
-    files: list[str]
-
-
-def _blocks(content: object) -> list[dict[str, Any]]:
-    return [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
-
-
-def _is_human_text(content: object) -> bool:
-    if isinstance(content, str):
-        return True
-    blocks = _blocks(content)
-    if any(b.get("type") == "tool_result" for b in blocks):
-        return False
-    return any(b.get("type") == "text" for b in blocks)
-
-
-def _text_of(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    parts = [b.get("text", "") for b in _blocks(content) if b.get("type") == "text"]
-    return "\n".join(p for p in parts if p)
-
-
 def extract_turn(entries: list[dict[str, Any]]) -> Turn:
-    """Extract the last human request and the files edited after it.
+    """Return the LAST human turn (back-compatible wrapper over ``iter_turns``).
 
-    A new human user message resets the collected file list, so edits from
-    earlier turns are not re-attributed. ``tool_result`` user messages are not
-    human turns and do not reset.
+    Kept so existing callers and tests keep working; new surfaces use
+    ``turns_since`` from :mod:`wikiforge.ops.transcript` instead.
     """
-    request = ""
-    files: list[str] = []
-    for entry in entries:
-        message = entry.get("message")
-        message = message if isinstance(message, dict) else {}
-        role = message.get("role") or entry.get("type")
-        content = message.get("content", entry.get("content"))
-        if role == "user" and _is_human_text(content):
-            request = _text_of(content)
-            files = []
-        elif role == "assistant":
-            for block in _blocks(content):
-                if block.get("type") == "tool_use" and block.get("name") in EDIT_TOOLS:
-                    inp = block.get("input", {})
-                    fp = inp.get("file_path") or inp.get("notebook_path")
-                    if isinstance(fp, str) and fp and fp not in files:
-                        files.append(fp)
-    return Turn(request=request, files=files)
+    turns = iter_turns(entries)
+    return turns[-1] if turns else Turn(request="", files=[])
 
 
 GitRunner = Callable[[list[str]], str]
