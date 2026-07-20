@@ -90,6 +90,11 @@ def test_safe_event_type_accepts_bare_words_and_defaults_the_rest() -> None:
     assert safe_event_type("bad\ntype") == "change"  # embedded newline
     assert safe_event_type("x" * 40) == "change"  # over-long
     assert safe_event_type(None) == "change"
+    # Python's `$` also matches just before a TRAILING newline, so a bare `$` guard
+    # would pass "bugfix\n" through and put a line break into the recall annotation
+    # that renders on every prompt. The pattern must anchor with `\Z`.
+    assert safe_event_type("bugfix\n") == "change"
+    assert safe_event_type("bugfix\r\n") == "change"
 
 
 def test_render_warning_sanitizes_a_malicious_type() -> None:
