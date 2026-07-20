@@ -485,6 +485,9 @@ def capture(
     subagent: bool = typer.Option(
         False, "--subagent", help="Read Claude Code SubagentStop JSON from stdin."
     ),
+    precompact: bool = typer.Option(
+        False, "--precompact", help="Read Claude Code PreCompact JSON from stdin."
+    ),
 ) -> None:
     """Record a development event: auto from a Stop hook (--hook), or a manual --note."""
     if flush:
@@ -510,6 +513,19 @@ def capture(
             asyncio.run(run_capture_subagent(resolve_capture_home(home), stdin))
         except Exception:
             pass  # a SubagentStop hook must never break the session
+        return
+
+    if precompact:
+        try:
+            import sys
+
+            from wikiforge.paths import resolve_capture_home
+            from wikiforge.services import run_capture_precompact
+
+            stdin = sys.stdin.read() if not sys.stdin.isatty() else ""
+            asyncio.run(run_capture_precompact(resolve_capture_home(home), stdin))
+        except Exception:
+            pass  # a PreCompact hook must never break the session
         return
 
     if hook:

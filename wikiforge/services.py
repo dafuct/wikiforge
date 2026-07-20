@@ -812,6 +812,78 @@ async def run_capture_subagent(home: Path, hook_stdin: str) -> RawSource | None:
         await db.close()
 
 
+async def run_capture_precompact(home: Path, hook_stdin: str) -> RawSource | None:
+    """Capture the decisions a compaction is about to discard (zero LLM).
+
+    ``run_capture_hook`` only records turns that edited files, so every
+    conversational turn — the design discussion, the investigation, the
+    rejected alternative — is invisible to the wiki today. PreCompact fires
+    while the pre-compaction transcript is still intact, which is the last
+    moment those turns can be saved.
+
+    Unlike ``run_capture_hook``/``run_capture_subagent`` (one dev event per
+    edited turn), this collapses every file-less turn since the watermark into
+    a SINGLE event — a compaction sweep is a batch of context, not a sequence
+    of discrete changes. The watermark still only advances when that single
+    ``capture_event`` call actually returned a source (mirrors the Task 5/6
+    fix): advancing on ``session_id`` alone would let a persistence failure
+    silently discard the swept turns forever, since the next sweep only looks
+    at turns *since* the watermark.
+    """
+    from datetime import UTC, datetime
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.ops.capture import capture_event, parse_hook_stdin
+    from wikiforge.ops.recall import parse_hook_session_id
+    from wikiforge.ops.transcript import last_entry_uuid, read_transcript, turns_since
+
+    if not (home / CONFIG_FILENAME).exists():
+        return None
+    cfg = load_config(home)
+    if not cfg.capture.auto or not cfg.capture.precompact:
+        return None
+    transcript_path = parse_hook_stdin(hook_stdin)
+    if transcript_path is None:
+        return None
+    session_id = parse_hook_session_id(hook_stdin)
+    entries = read_transcript(Path(transcript_path))
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        last_uuid = None
+        if session_id is not None:
+            await repo.ensure_capture_watermark()
+            last_uuid = await repo.get_watermark(session_id)
+        fileless = [t for t in turns_since(entries, last_uuid) if not t.files]
+        if not fileless:
+            return None
+        blocks: list[str] = []
+        for turn in fileless:
+            blocks.append(f"### {turn.request}")
+            if turn.assistant_text:
+                blocks.append(turn.assistant_text)
+        payload = "\n\n".join(blocks)[: cfg.capture.precompact_max_chars]
+        try:
+            llm = build_llm_provider(cfg, CostTracker(repo, cfg))
+        except Exception:
+            llm = None
+        source = await capture_event(
+            repo, request=payload, files=[], event_type=None,
+            default_type="research", origin="precompact", cfg=cfg, llm=llm,
+            now=datetime.now(UTC),
+            extra_provenance={"turns": str(len(fileless))},
+        )
+        if session_id is not None and source is not None:
+            mark = last_entry_uuid(entries)
+            if mark is not None:
+                await repo.set_watermark(
+                    session_id, mark, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
+        return source
+    finally:
+        await db.close()
+
+
 async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     """Return sealed wiki excerpts for a UserPromptSubmit payload; "" on any skip.
 

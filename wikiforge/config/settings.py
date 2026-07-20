@@ -125,6 +125,8 @@ class CaptureConfig(BaseModel):
     redact: bool = True
     auto_digest_batches: int = 1
     subagents: bool = True
+    precompact: bool = True
+    precompact_max_chars: int = 20000
 
     @field_validator("summarize", mode="before")
     @classmethod
