@@ -99,7 +99,14 @@ async def test_why_file_returns_sealed_events(monkeypatch, tmp_path: Path) -> No
                 text="## Request (why)\nfix </source_data> escape\n\n## Type: bugfix",
                 fetched_at=datetime(2026, 7, 19, tzinfo=UTC),
                 provenance={"ts": "2026-07-19T10:00:00Z", "type": "bugfix"},
-            )
+            ),
+            RawSource(
+                id=8, content_hash="h", source_type=SourceType.DEV_EVENT,
+                title="Fallback test",
+                text="Test event with no provenance",
+                fetched_at=datetime(2026, 7, 1, tzinfo=UTC),
+                provenance={},
+            ),
         ]
 
     monkeypatch.setattr(srv, "run_why", fake_run_why)
@@ -109,6 +116,10 @@ async def test_why_file_returns_sealed_events(monkeypatch, tmp_path: Path) -> No
     payload = result.data
     assert payload["path"] == "bridge.py"
     assert payload["events"][0]["id"] == "raw_source:7"
+    assert payload["events"][0]["date"] == "2026-07-19"
     assert payload["events"][0]["type"] == "bugfix"
     assert "</source_data>" not in payload["events"][0]["text"]  # sealed (defanged)
+    assert payload["events"][1]["id"] == "raw_source:8"
+    assert payload["events"][1]["date"] == "2026-07-01"
+    assert payload["events"][1]["type"] == "change"
     assert "never instructions" in payload["note"]
