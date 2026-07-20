@@ -140,10 +140,24 @@ tokens of Claude Code harness overhead, so the cheapest call is the one never ma
 It captures **uncommitted** work, so you never have to commit for the wiki to remember.
 
 - **Automatic:** fires when a task changed files. No action needed.
+- **Subagent work is captured too.** A `SubagentStop` hook records what each subagent changed, keyed
+  by its own session so parent and child never double-capture. Without it, work delegated to
+  subagents is invisible to the dev log — which, in a subagent-driven workflow, is most of the work.
+  Turn it off with `[capture] subagents = false`.
+- **Decisions that changed no file are captured before they're lost.** A `PreCompact` hook fires while
+  the pre-compaction transcript is still intact and sweeps up the turns nothing else records — the
+  design discussion, the investigation, the rejected alternative. (`Stop` only records turns that
+  edited files, so those conversations previously vanished at compaction.) `[capture] precompact`,
+  capped by `precompact_max_chars`.
 - **Research notes:** for investigations that changed no files, run `/wikiforge:wiki-note "what you
   found and why it matters"`.
-- **Where it lands:** the project-local `.wikiforge/` if present, else your default wiki.
-  Run `wiki init` there first.
+- **Where it lands:** the **main repository's** `.wikiforge/` when you're in a git repo — resolved via
+  `git rev-parse --git-common-dir`, so a subagent running in its own worktree still writes to the one
+  project wiki instead of forking memory per worktree — else the project-local `.wikiforge/`, else your
+  default wiki. Run `wiki init` there first.
+- **Each event records where it happened:** the branch, the short HEAD SHA, and whether it was a
+  worktree. Capture still records *uncommitted* work, so these say where a decision was made — they
+  don't tie the event to a commit.
 - **Summarization is zero-LLM by default.** `[capture] summarize` is `"off"` | `"sync"` | `"deferred"`
   (default **`"deferred"`**): short requests (`<= summarize_min_chars`, default 200) become their own
   summary verbatim, no LLM call, ever; longer ones are stored with no summary and marked
@@ -203,9 +217,10 @@ a file and, when that file carries decision history, hands the agent the past re
 silently undo a decision it can't remember. It **only informs, never blocks**: it always returns an
 `allow` decision and delivers the note as `additionalContext` (plain hook stdout would reach only Claude
 Code's debug log, never the model — verified against Claude Code 2.1.207). Tuning lives under `[why]`:
-`guardrail` (default `true`), `guardrail_types` (default `["bugfix", "design", "spec", "research"]` —
-`chore`/`docs` are excluded so routine edits stay quiet), and `guardrail_max_events` (default 2). Each
-file warns at most once per session, and the whole lookup is pure SQL.
+`guardrail` (default `true`), `guardrail_exclude_types` (default `["chore", "docs"]` — everything else
+warns, so routine edits stay quiet while real decisions surface), and `guardrail_max_events` (default 2).
+The older `guardrail_types` whitelist is still read for one release; when both are set the exclude-list
+wins. Each file warns at most once per session, and the whole lookup is pure SQL.
 
 ---
 
@@ -281,11 +296,15 @@ annotate = true               # prefix excerpts with confidence / staleness / ev
 
 [why]                         # decision memory (see "Why is this code the way it is?")
 guardrail = true              # PreToolUse: warn before editing a file with decision history
-guardrail_types = ["bugfix", "design", "spec", "research"]   # types worth interrupting for
+guardrail_exclude_types = ["chore", "docs"]   # types to STAY QUIET about; everything else warns
 guardrail_max_events = 2      # max past decisions quoted per warning
+# guardrail_types = [...]     # deprecated whitelist, still read for one release
 
 [capture]
 auto_digest_batches = 1       # SessionStart flush: max cheap digest batches (0 = off)
+subagents = true              # SubagentStop: record what each subagent changed
+precompact = true             # PreCompact: sweep decisions that touched no file
+precompact_max_chars = 20000
 
 [consolidate]
 period = "week"               # week | month
