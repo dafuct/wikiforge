@@ -52,3 +52,12 @@ JOIN raw_sources rs ON rs.id = def.source_id
 WHERE def.path = :path OR def.path LIKE '%/' || :path_pattern ESCAPE '\'
 ORDER BY rs.id DESC
 LIMIT :limit;
+
+-- name: why_log_seen^
+SELECT 1 AS n FROM why_log WHERE session_id = :session_id AND path = :path;
+
+-- name: insert_why_log!
+INSERT OR IGNORE INTO why_log (session_id, path, ts) VALUES (:session_id, :path, :ts);
+
+-- name: purge_why_log!
+DELETE FROM why_log WHERE ts < :cutoff;

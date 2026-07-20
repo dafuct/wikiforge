@@ -63,3 +63,13 @@ def test_session_start_reinstalls_stale_cli() -> None:
     assert "--reinstall" in install
     assert "--no-cache" in install
     assert install.rstrip().endswith("true")  # still fail-safe
+
+
+def test_pretooluse_guardrail_wired() -> None:
+    hooks = _hooks()
+    entries = hooks["PreToolUse"][0]
+    assert entries["matcher"] == "Edit|Write|MultiEdit|NotebookEdit"
+    commands = [h["command"] for h in entries["hooks"]]
+    assert any("wiki why --hook" in c for c in commands)
+    assert all("command -v wiki" in c for c in commands)
+    assert all(c.rstrip().endswith("; true") for c in commands)
