@@ -73,3 +73,11 @@ def test_pretooluse_guardrail_wired() -> None:
     assert any("wiki why --hook" in c for c in commands)
     assert all("command -v wiki" in c for c in commands)
     assert all(c.rstrip().endswith("; true") for c in commands)
+
+
+def test_subagent_stop_hook_wired() -> None:
+    hooks = _hooks()
+    commands = [h["command"] for group in hooks["SubagentStop"] for h in group["hooks"]]
+    assert any("wiki capture --subagent" in c for c in commands)
+    assert all("command -v wiki" in c for c in commands)
+    assert all(c.rstrip().endswith("; true") for c in commands)

@@ -124,6 +124,7 @@ class CaptureConfig(BaseModel):
     max_diff_lines: int = 200
     redact: bool = True
     auto_digest_batches: int = 1
+    subagents: bool = True
 
     @field_validator("summarize", mode="before")
     @classmethod

@@ -6,6 +6,7 @@ Milestone 1 provides ``init_wiki``; Milestone 2 adds ``ingest_source`` and
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -727,6 +728,73 @@ async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
             captured = await capture_event(
                 repo, request=turn.request, files=turn.files, event_type=None,
                 default_type="change", origin="hook", cfg=cfg, llm=llm, now=datetime.now(UTC),
+            )
+            if captured is not None:
+                source = captured
+        if session_id is not None and source is not None:
+            mark = last_entry_uuid(entries)
+            if mark is not None:
+                await repo.set_watermark(
+                    session_id, mark, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
+        return source
+    finally:
+        await db.close()
+
+
+async def run_capture_subagent(home: Path, hook_stdin: str) -> RawSource | None:
+    """Capture a subagent's work from a SubagentStop payload (best-effort, zero LLM-free path).
+
+    Subagents run with their own transcript, so the main session's Stop hook
+    never sees their edits. Their own session id keys the watermark, which is
+    what keeps parent and child from capturing the same work twice. Every edited
+    turn since the watermark is captured (mirrors ``run_capture_hook``'s loop),
+    not just the last one, so a subagent that makes several distinct edits
+    doesn't silently lose all but the final turn.
+    """
+    from datetime import UTC, datetime
+
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.ops.capture import capture_event, parse_hook_stdin
+    from wikiforge.ops.recall import parse_hook_session_id
+    from wikiforge.ops.transcript import last_entry_uuid, read_transcript, turns_since
+
+    if not (home / CONFIG_FILENAME).exists():
+        return None
+    cfg = load_config(home)
+    if not cfg.capture.auto or not cfg.capture.subagents:
+        return None
+    transcript_path = parse_hook_stdin(hook_stdin)
+    if transcript_path is None:
+        return None
+    session_id = parse_hook_session_id(hook_stdin)
+    try:
+        parent = json.loads(hook_stdin).get("parent_session_id")
+    except (ValueError, TypeError):
+        parent = None
+    entries = read_transcript(Path(transcript_path))
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        last_uuid = None
+        if session_id is not None:
+            await repo.ensure_capture_watermark()
+            last_uuid = await repo.get_watermark(session_id)
+        turns = turns_since(entries, last_uuid)
+        edited = [t for t in turns if t.files]
+        if not edited:
+            return None
+        try:
+            llm = build_llm_provider(cfg, CostTracker(repo, cfg))
+        except Exception:
+            llm = None
+        source: RawSource | None = None
+        for turn in edited:
+            captured = await capture_event(
+                repo, request=turn.request, files=turn.files, event_type=None,
+                default_type="change", origin="subagent", cfg=cfg, llm=llm,
+                now=datetime.now(UTC),
+                extra_provenance={"parent_session_id": parent} if parent else None,
             )
             if captured is not None:
                 source = captured

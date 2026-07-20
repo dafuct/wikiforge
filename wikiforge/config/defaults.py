@@ -101,6 +101,7 @@ topic_label = "development-log"
 max_diff_lines = 200
 redact = true
 auto_digest_batches = 1    # SessionStart flush: max cheap digest calls (25 events each); 0 = off
+subagents = true           # SubagentStop: record what a subagent changed
 
 [recall]
 enabled = true             # UserPromptSubmit hook: inject wiki excerpts into session (no LLM)

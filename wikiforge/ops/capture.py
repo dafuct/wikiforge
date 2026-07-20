@@ -263,12 +263,16 @@ async def capture_event(
     llm: LLMProvider | None,
     now: datetime,
     git_runner: GitRunner = default_git_runner,
+    extra_provenance: dict[str, str] | None = None,
 ) -> RawSource | None:
     """Build, persist, FTS-index, and log one dev event; return the stored source.
 
     ``event_type=None`` lets the LLM classify; a non-None value is used verbatim.
     Any LLM failure (or ``[capture] summarize=false``) falls back to no summary and
     ``default_type``. Indexing is best-effort — the source is persisted even if it fails.
+    ``extra_provenance`` lets a surface (e.g. SubagentStop's ``parent_session_id``)
+    attach fields to the provenance dict without this function growing per-surface
+    branches.
     """
     if cfg.capture.redact:
         request = redact_secrets(request)
@@ -310,6 +314,7 @@ async def capture_event(
             "origin": origin,
             "label": cfg.capture.topic_label,
             **git_meta,
+            **(extra_provenance or {}),
             **({"digest": "pending"} if digest_pending else {}),
         },
     )
