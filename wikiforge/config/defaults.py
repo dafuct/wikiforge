@@ -102,6 +102,8 @@ max_diff_lines = 200
 redact = true
 auto_digest_batches = 1    # SessionStart flush: max cheap digest calls (25 events each); 0 = off
 subagents = true           # SubagentStop: record what a subagent changed
+precompact = true          # PreCompact: sweep decisions that touched no file, before they are lost
+precompact_max_chars = 20000
 
 [recall]
 enabled = true             # UserPromptSubmit hook: inject wiki excerpts into session (no LLM)
