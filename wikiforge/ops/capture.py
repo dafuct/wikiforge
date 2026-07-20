@@ -176,6 +176,30 @@ def git_diff_stat(files: list[str], *, runner: GitRunner, max_lines: int) -> str
     return "\n".join(lines)
 
 
+def git_context(runner: GitRunner) -> dict[str, str]:
+    """Branch, short SHA and worktree flag for the current checkout.
+
+    Best-effort: any failure yields empty values rather than breaking capture,
+    which must survive in a non-git directory. These fields say *where* a
+    decision was made — capture still records uncommitted work, so they do not
+    tie an event to a commit.
+    """
+    def one(argv: list[str]) -> str:
+        try:
+            return runner(argv).strip()
+        except Exception:
+            return ""
+
+    git_dir = one(["git", "rev-parse", "--git-dir"])
+    common = one(["git", "rev-parse", "--git-common-dir"])
+    worktree = "1" if git_dir and common and git_dir != common else "0"
+    return {
+        "branch": one(["git", "rev-parse", "--abbrev-ref", "HEAD"]),
+        "head_sha": one(["git", "rev-parse", "--short", "HEAD"]),
+        "worktree": worktree,
+    }
+
+
 class DevEventDigest(BaseModel):
     """The LLM's distilled summary + inferred type for a dev event."""
 
@@ -249,6 +273,7 @@ async def capture_event(
     if cfg.capture.redact:
         request = redact_secrets(request)
     diff_stat = git_diff_stat(files, runner=git_runner, max_lines=cfg.capture.max_diff_lines)
+    git_meta = git_context(git_runner)
 
     mode = cfg.capture.summarize
     summary = ""
@@ -284,6 +309,7 @@ async def capture_event(
             "ts": ts,
             "origin": origin,
             "label": cfg.capture.topic_label,
+            **git_meta,
             **({"digest": "pending"} if digest_pending else {}),
         },
     )

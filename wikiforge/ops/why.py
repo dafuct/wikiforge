@@ -80,8 +80,10 @@ def format_events(path: str, events: list[RawSource]) -> str:
     for event in events:
         marker = event.provenance.get("consolidated")
         suffix = f"  [consolidated: {marker}]" if marker else ""
+        branch = event.provenance.get("branch")
+        where = f" ({branch})" if branch else ""
         kind = safe_event_type(event.provenance.get("type"))
-        lines.append(f"  {_event_date(event)} · {kind} · {event_summary(event)}{suffix}")
+        lines.append(f"  {_event_date(event)} · {kind}{where} · {event_summary(event)}{suffix}")
     return "\n".join(lines)
 
 
