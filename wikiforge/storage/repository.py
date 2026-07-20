@@ -952,6 +952,13 @@ class Repository:
         Pre-upgrade wikis lack the table. Backfill runs only when the table is
         empty and dev events exist; INSERT OR IGNORE makes re-runs no-ops. The
         index is derived data — rebuildable from provenance at any time.
+
+        The backfill's insert phase is a single transaction: every
+        ``(source_id, path)`` pair is collected first, then written under one
+        write-lock/commit. A per-event commit loop would let a process killed
+        mid-backfill leave a partial index — and the ``EXISTS`` guard above
+        would then see a non-empty table and skip the scan forever, hiding the
+        un-backfilled events with no rebuild path.
         """
         async with self._db.lock:
             await self._db.conn.executescript(DEV_EVENT_FILES_DDL)
@@ -959,11 +966,17 @@ class Repository:
         row = await self._db.fetchone("SELECT EXISTS(SELECT 1 FROM dev_event_files) AS n")
         if row is not None and row["n"]:
             return
+        pairs: list[tuple[int, str]] = []
         async for r in self._q.all_dev_event_provenance(self._db.conn):
             files = str(json.loads(r["provenance"]).get("files", ""))
             paths = [p for p in files.split(",") if p]
-            if paths:
-                await self.add_dev_event_files(int(r["id"]), paths)
+            pairs.extend((int(r["id"]), path) for path in paths)
+        if not pairs:
+            return
+        async with self._db.lock:
+            for source_id, path in pairs:
+                await self._q.insert_dev_event_file(self._db.conn, source_id=source_id, path=path)
+            await self._db.conn.commit()
 
     async def add_dev_event_files(self, source_id: int, paths: list[str]) -> None:
         """Record which files a dev event touched (idempotent per (event, path))."""

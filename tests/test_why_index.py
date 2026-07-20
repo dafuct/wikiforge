@@ -80,6 +80,46 @@ async def test_backfill_populates_once_and_is_idempotent(tmp_path: Path) -> None
         await db.close()
 
 
+async def test_backfill_writes_all_pairs_under_a_single_commit(tmp_path: Path) -> None:
+    """The backfill's insert phase is one transaction, not one commit per event.
+
+    A per-event commit loop means a process killed mid-backfill (the PreToolUse
+    hook has a 10s timeout; ``capture_event`` swallows exceptions) leaves a
+    partial index — and the ``EXISTS`` guard above then trips forever, hiding
+    the un-backfilled events with no rebuild path. Count commits on the
+    connection: one for the (unconditional) DDL ``executescript``, and exactly
+    one more for the whole batch of backfilled ``(source_id, path)`` pairs —
+    never one per pair.
+    """
+    home, db, repo, cfg = await _wiki(tmp_path)
+    try:
+        await _event(repo, "/repo/a.py,/repo/b.py", "2026-07-19T10:00:00Z")
+        await _event(repo, "/repo/c.py", "2026-07-19T11:00:00Z")
+        await db.conn.execute("DROP TABLE dev_event_files")  # simulate a pre-upgrade wiki
+        await db.conn.commit()
+
+        original_commit = db.conn.commit
+        commit_calls = 0
+
+        async def _counting_commit(*args: object, **kwargs: object) -> object:
+            nonlocal commit_calls
+            commit_calls += 1
+            return await original_commit(*args, **kwargs)
+
+        db.conn.commit = _counting_commit  # type: ignore[method-assign]
+        try:
+            await repo.ensure_dev_event_files()
+        finally:
+            db.conn.commit = original_commit  # type: ignore[method-assign]
+
+        assert commit_calls == 2  # DDL commit + one batched backfill commit
+
+        rows = await db.fetchall("SELECT path FROM dev_event_files ORDER BY path")
+        assert [r["path"] for r in rows] == ["/repo/a.py", "/repo/b.py", "/repo/c.py"]
+    finally:
+        await db.close()
+
+
 async def test_path_matching_exact_and_suffix_with_false_positive_guard(tmp_path) -> None:
     home, db, repo, cfg = await _wiki(tmp_path)
     try:
@@ -89,6 +129,28 @@ async def test_path_matching_exact_and_suffix_with_false_positive_guard(tmp_path
         assert await repo.dev_events_for_path("data.py", limit=5)                  # suffix
         assert await repo.dev_events_for_path("wikiforge/data.py", limit=5)        # longer suffix
         assert await repo.dev_events_for_path("a.py", limit=5) == []               # NOT a.py
+    finally:
+        await db.close()
+
+
+async def test_suffix_match_dedupes_event_touching_two_same_basename_files(
+    tmp_path: Path,
+) -> None:
+    """A join against dev_event_files emits one row per matching PATH, not per event.
+
+    One dev event whose provenance lists two files sharing a basename (a real
+    shape: a source file and its test both named ``why.py``) must still surface
+    as exactly one event when queried by that basename — a plain JOIN would
+    return it twice and silently starve ``--limit``.
+    """
+    home, db, repo, cfg = await _wiki(tmp_path)
+    try:
+        await _event(
+            repo, "/r/wikiforge/why.py,/r/tests/why.py", "2026-07-19T10:00:00Z"
+        )
+        await repo.ensure_dev_event_files()
+        events = await repo.dev_events_for_path("why.py", limit=5)
+        assert len(events) == 1
     finally:
         await db.close()
 

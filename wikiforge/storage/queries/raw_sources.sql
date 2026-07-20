@@ -47,9 +47,13 @@ INSERT OR IGNORE INTO dev_event_files (source_id, path) VALUES (:source_id, :pat
 -- name: dev_events_for_path
 SELECT rs.id, rs.content_hash, rs.canonical_url, rs.source_type, rs.title, rs.text,
        rs.fetched_at, rs.first_seen_session_id, rs.persona, rs.provenance
-FROM dev_event_files def
-JOIN raw_sources rs ON rs.id = def.source_id
-WHERE def.path = :path OR def.path LIKE '%/' || :path_pattern ESCAPE '\'
+FROM raw_sources rs
+WHERE rs.source_type = 'dev_event'
+  AND EXISTS (
+      SELECT 1 FROM dev_event_files d
+      WHERE d.source_id = rs.id
+        AND (d.path = :path OR d.path LIKE '%/' || :path_pattern ESCAPE '\')
+  )
 ORDER BY rs.id DESC
 LIMIT :limit;
 

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from wikiforge.llm.provider import LLMProvider
 from wikiforge.llm.safety import seal_source_data as _seal
+from wikiforge.ops.why import safe_event_type
 from wikiforge.search.retriever import HybridRetriever
 from wikiforge.search.rrf import ChunkTarget
 
@@ -131,7 +132,7 @@ def _annotation(t: ChunkTarget, now: datetime) -> str | None:
         if age is not None:
             parts.append(f"{age}d ago")
         if t.owner_event_type:
-            parts.append(t.owner_event_type)
+            parts.append(safe_event_type(t.owner_event_type))
         return f"({' · '.join(parts)})"
     return None
 
