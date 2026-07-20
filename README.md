@@ -231,6 +231,9 @@ file warns at most once per session, and the whole lookup is pure SQL.
 | `wiki feedback <target> <approve\|reject\|correct> [note]` | Record a verdict against an article (`article:<id>`) or finding (`finding:<id>`). |
 | `wiki capture` | Record a dev event. `--hook` (reads Claude Code `Stop` JSON on stdin), `--note "<text>"` + `--type`, or `--flush` to backfill dev-log vectors (free) with optional `--digests` to batch-summarize. |
 | `wiki recall --hook` | Read a Claude Code `UserPromptSubmit` payload on stdin and print relevant wiki excerpts for the agent's context. Zero LLM. Always exits 0. |
+| `wiki why <path>` | Show WHY a file is the way it is — the dev events that touched it, newest first. `--limit N`; `--hook` reads a `PreToolUse` payload and emits the guardrail warning. Zero LLM. |
+| `wiki consolidate` | Roll dev events older than `[consolidate] min_age_days` into a versioned `development-log` article. `--if-auto` runs only when `[consolidate] auto = true`. |
+| `wiki reindex --embeddings` | Rebuild every chunk vector with the active embedding model (local, zero LLM) — required after changing `local_model`. |
 | `wiki stats` | Wiki size + LLM spend. `--since <YYYY-MM-DD>` adds a spend window. |
 | `wiki context` | Print a recent-activity digest for pasting into an agent's context. |
 | `wiki serve-mcp` | Serve the wiki over MCP (stdio transport). |
@@ -408,7 +411,8 @@ These are deliberate scoping decisions, not oversights:
 - **`wiki research` shows a live agent table; `wiki thesis` does not** (thesis runs to completion and prints its verdict).
 - **The static-site export renders article Markdown as escaped, pre-wrapped text** — there is no Markdown→HTML dependency, so bodies are shown verbatim (and safely escaped) rather than rendered.
 - **Dev events are never compiled into articles.** They stay raw, searchable sources — the dev log is history, not synthesized knowledge.
-- **The recall similarity gate is tuned for the default `bge-small` embedder.** Its 0.6 threshold was calibrated by measurement (unrelated prompts peak ~0.50, relevant ones 0.72+). If you switch embedding models, re-measure it — these models have a high similarity floor, and a threshold below it makes recall inject noise into every prompt.
+- **The recall similarity gate is tuned for the default `multilingual-e5-small` embedder.** Its 0.80 threshold was calibrated by measurement on a live wiki (unrelated uk+en prompts sit ~0.78–0.81, relevant ones ~0.80–0.90). If you switch embedding models, re-measure it and run `wiki reindex --embeddings` — these models have a high similarity floor, and a threshold below it makes recall inject noise into every prompt.
+- **Dev-event attribution is file-level, and events carry no commit anchor.** Capture records the files a change touched (that is what `wiki why` indexes), not hunk line ranges, and deliberately captures *uncommitted* work — so an event is not tied to a branch or a SHA. `wiki why <path>:52` therefore accepts the line and ignores it.
 
 ### Deferred toggles (not built)
 
