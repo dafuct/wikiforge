@@ -776,6 +776,27 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     return excerpts or hint
 
 
+async def run_why(home: Path, path: str, *, limit: int = 5) -> list[RawSource]:
+    """Return the dev events that touched ``path``, newest first (zero LLM).
+
+    Never constructs an embedding or LLM provider — the lookup is pure SQL over
+    the ``dev_event_files`` index (ensured + backfilled on first use). A home
+    with no config or no database returns ``[]``.
+    """
+    from wikiforge.storage.db import DB_FILENAME
+
+    if not (home / CONFIG_FILENAME).exists() or not (home / DB_FILENAME).exists():
+        return []
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        await repo.ensure_dev_event_files()
+        return await repo.dev_events_for_path(path, limit=limit)
+    finally:
+        await db.close()
+
+
 async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
     """Backfill dev-log vectors; with ``digests`` also batch-summarize pending events."""
     from wikiforge.activity.cost import CostTracker
