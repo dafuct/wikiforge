@@ -144,6 +144,18 @@ class ConsolidateConfig(BaseModel):
     auto: bool = False
 
 
+class WhyConfig(BaseModel):
+    """Decision-memory settings: the wiki why lookup and the PreToolUse guardrail."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    guardrail: bool = True
+    guardrail_types: list[str] = Field(
+        default_factory=lambda: ["bugfix", "design", "spec", "research"]
+    )
+    guardrail_max_events: int = 2
+
+
 class RecallConfig(BaseModel):
     """UserPromptSubmit recall-hook settings (zero-LLM memory injection)."""
 
@@ -161,6 +173,7 @@ class RecallConfig(BaseModel):
     dedup: bool = True
     devlog_half_life_days: float = 14.0
     routing_hint: bool = False
+    annotate: bool = True
 
 
 class Config(BaseModel):
@@ -181,6 +194,7 @@ class Config(BaseModel):
     capture: CaptureConfig = CaptureConfig()
     recall: RecallConfig = RecallConfig()
     consolidate: ConsolidateConfig = ConsolidateConfig()
+    why: WhyConfig = WhyConfig()
 
     def model_for_task(self, task: str, tier: str | None = None) -> str:
         """Resolve a task (and optional explicit tier override) to a model ID.

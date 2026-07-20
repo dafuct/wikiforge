@@ -101,3 +101,23 @@ def test_effort_for_task_defaults_low_with_template_overrides(tmp_path) -> None:
 
 def test_subprocess_timeout_default(tmp_path) -> None:
     assert _cfg(tmp_path).llm.subprocess_timeout_s == 300.0
+
+
+def test_why_config_defaults_and_template(tmp_path) -> None:
+    cfg = _cfg(tmp_path)  # reuse this file's helper: write_default_config + load_config
+    assert cfg.why.guardrail is True
+    assert cfg.why.guardrail_types == ["bugfix", "design", "spec", "research"]
+    assert cfg.why.guardrail_max_events == 2
+    assert cfg.recall.annotate is True
+
+
+def test_legacy_config_without_why_block_loads(tmp_path) -> None:
+    from wikiforge.config.settings import load_config, write_default_config
+
+    write_default_config(tmp_path, wiki_name="T")
+    toml = (tmp_path / "config.toml").read_text()
+    stripped = toml.split("[why]")[0] + "[consolidate]" + toml.split("[consolidate]", 1)[1]
+    (tmp_path / "config.toml").write_text(stripped.replace("annotate = true\n", ""))
+    cfg = load_config(tmp_path)
+    assert cfg.why.guardrail is True          # defaults kick in
+    assert cfg.recall.annotate is True
