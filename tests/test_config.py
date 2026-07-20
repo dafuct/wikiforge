@@ -124,16 +124,32 @@ def test_legacy_config_without_why_block_loads(tmp_path) -> None:
     assert cfg.recall.annotate is True
 
 
-def test_guardrail_exclude_list_defaults_and_precedence(tmp_path) -> None:
+def test_guardrail_warns_for_precedence(tmp_path) -> None:
     from wikiforge.config.settings import WhyConfig
 
-    assert WhyConfig().guardrail_exclude_types == ["chore", "docs"]
-    assert WhyConfig().guardrail_types is None
-    assert WhyConfig().excluded_types() == {"chore", "docs"}
-    # Legacy whitelist alone: everything NOT whitelisted is excluded.
+    # (a) nothing set -> default exclude-list
+    default = WhyConfig()
+    assert default.guardrail_exclude_types == ["chore", "docs"]
+    assert default.guardrail_types is None
+    assert default.warns_for("change") is True
+    assert default.warns_for("feature") is True
+    assert default.warns_for("chore") is False
+    assert default.warns_for("docs") is False
+
+    # (c) legacy whitelist alone -> warn ONLY for listed types...
     legacy = WhyConfig(guardrail_types=["bugfix", "design"])
-    assert "chore" in legacy.excluded_types()
-    assert "bugfix" not in legacy.excluded_types()
-    # Both present: the exclude-list wins.
+    assert legacy.warns_for("bugfix") is True
+    assert legacy.warns_for("chore") is False
+    # ...including a custom type the old code also stayed silent about.
+    assert legacy.warns_for("spike") is False
+
+    # (d) both set -> the exclude-list wins
     both = WhyConfig(guardrail_types=["bugfix"], guardrail_exclude_types=["docs"])
-    assert both.excluded_types() == {"docs"}
+    assert both.warns_for("docs") is False
+    assert both.warns_for("bugfix") is True      # not excluded, so it warns
+    assert both.warns_for("spike") is True
+
+    # (b) exclude-list explicitly set alone
+    explicit = WhyConfig(guardrail_exclude_types=["research"])
+    assert explicit.warns_for("research") is False
+    assert explicit.warns_for("chore") is True
