@@ -105,7 +105,7 @@ async def test_chunk_targets_populates_owner_ts_and_source_type(db_repo) -> None
         content_hash="h-recency", source_type=SourceType.DEV_EVENT,
         title="Dev event", text="dev event chunk text",
         fetched_at=datetime(2026, 7, 15, tzinfo=UTC),
-        provenance={"ts": "2026-07-01T00:00:00Z"},
+        provenance={"ts": "2026-07-01T00:00:00Z", "type": "bugfix"},
     )
     sid, _ = await repo.ingest_raw_source(src)
     rowid = await repo.insert_chunk(
@@ -118,7 +118,7 @@ async def test_chunk_targets_populates_owner_ts_and_source_type(db_repo) -> None
     )
     article = Article(
         topic_id=topic_id, slug="art-topic", title="Art Topic", body_md="article body",
-        path="art-topic.md", confidence=0.9, compile_digest="d1", version=1,
+        path="art-topic.md", confidence=0.61, compile_digest="d1", version=1,
     )
     article_id = await repo.insert_article(article)
     art_rowid = await repo.insert_chunk(
@@ -129,9 +129,13 @@ async def test_chunk_targets_populates_owner_ts_and_source_type(db_repo) -> None
     [dev_target] = await repo.chunk_targets([rowid])
     assert dev_target.owner_ts == "2026-07-01T00:00:00Z"
     assert dev_target.owner_source_type == "dev_event"
+    assert dev_target.owner_event_type == "bugfix"
 
     [art_target] = await repo.chunk_targets([art_rowid])
     assert art_target.owner_ts is None
+    assert art_target.article_confidence == 0.61
+    assert art_target.topic_volatility == "MEDIUM"
+    assert art_target.topic_last_researched_at is None
 
 
 async def test_chunks_missing_vectors_lists_unembedded(db_repo) -> None:

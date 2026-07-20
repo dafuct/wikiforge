@@ -284,3 +284,34 @@ async def test_run_recall_hook_appends_hint_only_when_enabled(tmp_path, monkeypa
     write_default_config(home2, wiki_name="T2")
     out2 = await run_recall_hook(home2, payload)
     assert out2 == ""
+
+
+async def test_recall_annotates_excerpts_when_enabled() -> None:
+    art = _target("wal article text", 1)
+    art.owner_type = "article"
+    art.article_confidence = 0.61
+    art.topic_volatility = "HIGH"
+    art.topic_last_researched_at = "2026-06-08T00:00:00Z"
+    dev = _target("deadlock note", 2, seq=1)
+    dev.owner_source_type = "dev_event"
+    dev.owner_ts = "2026-07-17T00:00:00Z"
+    dev.owner_event_type = "bugfix"
+    repo = _VecRepo({1: [1.0, 0.0, 0.0, 0.0], 2: [1.0, 0.0, 0.0, 0.0]})
+    out = await recall_excerpts(
+        repo, _StubRetriever([art, dev]), _CountingEmbedder(), _Cfg(),
+        "why the deadlock in the bridge?", now=datetime(2026, 7, 20, tzinfo=UTC),
+    )
+    assert "(article · confidence 0.61 · researched 42d ago · HIGH volatility)" in out
+    assert "(dev event · 3d ago · bugfix)" in out
+
+
+async def test_annotation_omits_missing_fields_and_default_render_is_unchanged() -> None:
+    from wikiforge.query.service import render_excerpts
+
+    bare = _target("text only", 1)
+    bare.owner_source_type = "dev_event"          # no ts, no type
+    annotated = render_excerpts([bare], annotate=True)
+    assert "(dev event)" in annotated             # only what exists — nothing guessed
+    plain = render_excerpts([bare])
+    assert "(dev event" not in plain              # default path byte-identical to today
+    assert plain.startswith(RECALL_HEADER)

@@ -890,6 +890,10 @@ class Repository:
                     owner_ts=row["owner_ts"],
                     owner_source_type=row["owner_source_type"],
                     consolidated=row["consolidated"],
+                    article_confidence=row["article_confidence"],
+                    topic_volatility=row["topic_volatility"],
+                    topic_last_researched_at=row["topic_last_researched_at"],
+                    owner_event_type=row["owner_event_type"],
                 )
             )
         return targets

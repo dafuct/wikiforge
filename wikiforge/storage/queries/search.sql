@@ -42,7 +42,11 @@ SELECT c.rowid AS rowid, c.owner_type AS owner_type, c.owner_id AS owner_id, c.s
        t.id AS topic_id, t.status AS topic_status,
        COALESCE(json_extract(rs.provenance, '$.ts'), rs.fetched_at) AS owner_ts,
        rs.source_type AS owner_source_type,
-       json_extract(rs.provenance, '$.consolidated') AS consolidated
+       json_extract(rs.provenance, '$.consolidated') AS consolidated,
+       a.confidence AS article_confidence,
+       t.volatility AS topic_volatility,
+       t.last_researched_at AS topic_last_researched_at,
+       json_extract(rs.provenance, '$.type') AS owner_event_type
 FROM chunks c
 LEFT JOIN articles a ON c.owner_type = 'article' AND a.id = c.owner_id
 LEFT JOIN topics t ON t.id = a.topic_id
