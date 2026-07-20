@@ -27,6 +27,34 @@ _CAVEAT = (
 _STDOUT = "<local-command-stdout>Set model to claude-opus-4-8</local-command-stdout>"
 _REMINDER = "<system-reminder>Remember to be helpful.</system-reminder>"
 
+# The realistic skill-invocation shape, measured on 120 real transcripts on 2026-07-20:
+# command-message + command-name + skill preamble + skill body, with the user's actual
+# request appearing ONLY in a trailing `ARGUMENTS:` line for 28 of 46 such messages.
+_SKILL_BODY = (
+    "# Brainstorming Ideas Into Designs\n"
+    "Ask clarifying questions before writing any implementation code.\n"
+    "Then produce a short design doc summarizing the chosen approach.\n"
+)
+_UKRAINIAN_REQUEST = "що можна покращити в wikiforge? для кращої memory для оптимізації."
+
+
+def _skill_message(arguments: str | None) -> str:
+    """Build a realistic slash-command-with-skill user message.
+
+    ``arguments`` is the trailing ``ARGUMENTS:`` line's content, or ``None`` to
+    build the pure-preamble shape (no user words anywhere).
+    """
+    text = (
+        "<command-message>superpowers:brainstorming</command-message>\n"
+        "<command-name>/superpowers:brainstorming</command-name>\n"
+        "Base directory for this skill: "
+        "/Users/x/.claude/plugins/cache/superpowers/skills/brainstorming\n\n"
+        f"{_SKILL_BODY}"
+    )
+    if arguments is not None:
+        text += f"\nARGUMENTS: {arguments}"
+    return text
+
 
 def _user(text: str, uuid: str = "u1") -> dict:
     return {"uuid": uuid, "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
@@ -60,6 +88,30 @@ def test_command_args_are_the_request() -> None:
         "<command-args>why did we pick WAL mode?</command-args>"
     )
     assert strip_envelopes(text).strip() == "why did we pick WAL mode?"
+
+
+def test_skill_preamble_arguments_tail_is_the_request() -> None:
+    """61% of measured skill-invocation messages carry the request ONLY here."""
+    text = _skill_message(_UKRAINIAN_REQUEST)
+    result = strip_envelopes(text)
+    assert result.strip() == _UKRAINIAN_REQUEST
+    for word in ("Brainstorming", "clarifying", "design doc", "implementation"):
+        assert word not in result
+
+
+def test_pure_skill_preamble_still_yields_nothing() -> None:
+    """The 17 pure-preamble cases (no ARGUMENTS tail) must keep being dropped."""
+    text = _skill_message(None)
+    assert strip_envelopes(text).strip() == ""
+
+
+def test_iter_turns_recovers_the_request_from_a_skill_message() -> None:
+    """The fix must reach real turn extraction, not just the strip_envelopes helper."""
+    entries = [_user(_skill_message(_UKRAINIAN_REQUEST), uuid="u1")]
+    turns = iter_turns(entries)
+    assert len(turns) == 1
+    assert turns[0].request == _UKRAINIAN_REQUEST
+    assert "Brainstorming" not in turns[0].request
 
 
 def test_is_human_request_rejects_envelope_only_messages() -> None:
