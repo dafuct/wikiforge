@@ -50,7 +50,27 @@ async def test_backfill_populates_once_and_is_idempotent(tmp_path: Path) -> None
         await repo.ensure_dev_event_files()
         rows = await db.fetchall("SELECT source_id, path FROM dev_event_files ORDER BY path")
         assert [r["path"] for r in rows] == ["/repo/wikiforge/a.py", "/repo/wikiforge/b.py"]
-        await repo.ensure_dev_event_files()  # second run: no dupes, no error
+
+        # Prove the second call actually SKIPS the backfill scan via its early-return
+        # guard — asserting only the row count stays at 2 would also pass if that
+        # guard were deleted, since INSERT OR IGNORE silently absorbs re-scanned
+        # duplicates. Wrap the query the backfill scan drives and assert it's never
+        # invoked on the second call.
+        original = repo._q.all_dev_event_provenance
+        calls = 0
+
+        def _counting_wrapper(*args: object, **kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        repo._q.all_dev_event_provenance = _counting_wrapper
+        try:
+            await repo.ensure_dev_event_files()  # second run: guard should short-circuit
+        finally:
+            repo._q.all_dev_event_provenance = original
+        assert calls == 0  # backfill scan was skipped, not merely re-absorbed
+
         rows2 = await db.fetchall("SELECT COUNT(*) AS n FROM dev_event_files")
         assert rows2[0]["n"] == 2
     finally:
@@ -66,6 +86,31 @@ async def test_path_matching_exact_and_suffix_with_false_positive_guard(tmp_path
         assert await repo.dev_events_for_path("data.py", limit=5)                  # suffix
         assert await repo.dev_events_for_path("wikiforge/data.py", limit=5)        # longer suffix
         assert await repo.dev_events_for_path("a.py", limit=5) == []               # NOT a.py
+    finally:
+        await db.close()
+
+
+async def test_underscore_and_percent_in_path_match_literally(tmp_path: Path) -> None:
+    home, db, repo, cfg = await _wiki(tmp_path)
+    try:
+        await _event(repo, "/repo/wikiforge/test_capture.py", "2026-07-19T10:00:00Z")
+        await _event(repo, "/repo/wikiforge/testXcapture.py", "2026-07-19T11:00:00Z")
+        await _event(repo, "/repo/wikiforge/100%done.py", "2026-07-19T12:00:00Z")
+        await _event(repo, "/repo/wikiforge/100Xdone.py", "2026-07-19T13:00:00Z")
+        await repo.ensure_dev_event_files()
+
+        # `_` is a LIKE wildcard for "any single char" — unescaped, "test_capture.py"
+        # would also match "testXcapture.py". Python paths contain underscores
+        # routinely, so this was an everyday false positive, not an adversarial one.
+        events = await repo.dev_events_for_path("test_capture.py", limit=5)
+        assert len(events) == 1
+        assert events[0].provenance["files"] == "/repo/wikiforge/test_capture.py"
+
+        # `%` is a LIKE wildcard for "any sequence" — same guarantee for a path
+        # segment containing a literal percent sign.
+        percent_events = await repo.dev_events_for_path("100%done.py", limit=5)
+        assert len(percent_events) == 1
+        assert percent_events[0].provenance["files"] == "/repo/wikiforge/100%done.py"
     finally:
         await db.close()
 
