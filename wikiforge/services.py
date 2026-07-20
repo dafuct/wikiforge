@@ -825,9 +825,10 @@ async def run_why_hook(home: Path, hook_stdin: str) -> str:
         repo = Repository(db)
         await repo.ensure_dev_event_files()
         events = await repo.dev_events_for_path(path, limit=25)
+        excluded = cfg.why.excluded_types()
         events = [
             e for e in events
-            if e.provenance.get("type") in cfg.why.guardrail_types
+            if (e.provenance.get("type") or "change") not in excluded
         ]
         if not events:
             return ""

@@ -168,3 +168,16 @@ def test_cli_hook_prints_nothing_when_there_is_no_warning(monkeypatch, tmp_path:
     result = CliRunner().invoke(app, ["why", "--hook", "--home", str(tmp_path)], input="{}")
     assert result.exit_code == 0
     assert result.stdout.strip() == ""
+
+
+async def test_guardrail_warns_on_change_typed_events(tmp_path: Path) -> None:
+    """`change` is 71% of real events; the exclude-list must let it through."""
+    home = await _seeded_home(tmp_path, event_type="change", request="do the thing")
+    assert (await run_why_hook(home, _payload())).startswith(WHY_HEADER)
+
+
+async def test_guardrail_stays_quiet_for_excluded_types(tmp_path: Path) -> None:
+    home = await _seeded_home(tmp_path, event_type="chore", request="bump deps")
+    assert await run_why_hook(home, _payload()) == ""
+    home_docs = await _seeded_home(tmp_path / "d", event_type="docs", request="update readme")
+    assert await run_why_hook(home_docs, _payload()) == ""

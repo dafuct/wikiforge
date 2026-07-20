@@ -150,10 +150,27 @@ class WhyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     guardrail: bool = True
-    guardrail_types: list[str] = Field(
-        default_factory=lambda: ["bugfix", "design", "spec", "research"]
+    guardrail_exclude_types: list[str] = Field(
+        default_factory=lambda: ["chore", "docs"]
     )
+    # Deprecated whitelist, still read for one release. `change` — 71% of real
+    # events — was never in it, so the whitelist silently limited the guardrail
+    # to ~16% of files; the exclude-list inverts that default.
+    guardrail_types: list[str] | None = None
     guardrail_max_events: int = 2
+
+    def excluded_types(self) -> set[str]:
+        """Event types the guardrail stays quiet about.
+
+        The exclude-list wins when both keys are set. A lone legacy whitelist is
+        honoured by excluding everything outside it, so an existing config keeps
+        its current behaviour until the key is removed.
+        """
+        if "guardrail_exclude_types" in self.model_fields_set or self.guardrail_types is None:
+            return set(self.guardrail_exclude_types)
+        known = {"feature", "bugfix", "research", "refactor", "spec", "design", "docs", "chore",
+                 "change"}
+        return known - set(self.guardrail_types)
 
 
 class RecallConfig(BaseModel):

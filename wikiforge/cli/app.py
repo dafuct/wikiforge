@@ -603,6 +603,18 @@ def why(
     from wikiforge.services import run_why
 
     clean_path, note = parse_path_arg(path)
+
+    from wikiforge.config.settings import load_config
+
+    try:
+        if load_config(resolve_capture_home(home)).why.guardrail_types is not None:
+            typer.echo(
+                "note: [why] guardrail_types is deprecated — use guardrail_exclude_types",
+                err=True,
+            )
+    except Exception:
+        pass
+
     events = asyncio.run(run_why(resolve_capture_home(home), clean_path, limit=limit))
     if note:
         typer.echo(note)
