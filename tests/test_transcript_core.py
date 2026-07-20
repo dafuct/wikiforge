@@ -105,6 +105,29 @@ def test_pure_skill_preamble_still_yields_nothing() -> None:
     assert strip_envelopes(text).strip() == ""
 
 
+def test_arguments_tail_uses_the_last_occurrence() -> None:
+    """A skill body containing 'ARGUMENTS: <doc text>' must not hijack the capture."""
+    doc_text = "optional parameters: defaults to 'help'"
+    actual_request = "як покращити збір метрик для аналізу?"
+
+    # Build a message with ARGUMENTS in the skill body (doc) and at the real tail.
+    text = (
+        "<command-message>superpowers:brainstorming</command-message>\n"
+        "<command-name>/superpowers:brainstorming</command-name>\n"
+        "Base directory for this skill: "
+        "/Users/x/.claude/plugins/cache/superpowers/skills/brainstorming\n\n"
+        f"{_SKILL_BODY}"
+        f"ARGUMENTS: {doc_text}\n"
+        f"ARGUMENTS: {actual_request}"
+    )
+    result = strip_envelopes(text)
+    # Only the final ARGUMENTS line's content should survive.
+    assert result.strip() == actual_request
+    # The documentation text from the earlier ARGUMENTS line must not appear.
+    assert doc_text not in result
+    assert "optional parameters" not in result
+
+
 def test_iter_turns_recovers_the_request_from_a_skill_message() -> None:
     """The fix must reach real turn extraction, not just the strip_envelopes helper."""
     entries = [_user(_skill_message(_UKRAINIAN_REQUEST), uuid="u1")]
