@@ -19,6 +19,10 @@ class ChunkTarget:
     owner_ts: str | None = None
     owner_source_type: str | None = None
     consolidated: str | None = None
+    article_confidence: float | None = None
+    topic_volatility: str | None = None
+    topic_last_researched_at: str | None = None
+    owner_event_type: str | None = None
 
 
 def reciprocal_rank_fusion(

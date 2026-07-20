@@ -185,4 +185,6 @@ async def recall_excerpts(
     if dedup:
         assert session_id is not None
         await repo.log_recall(session_id, chosen, now.strftime("%Y-%m-%dT%H:%M:%SZ"))
-    return render_excerpts(chosen, max_chars=cfg.recall.max_chars)
+    return render_excerpts(
+        chosen, max_chars=cfg.recall.max_chars, annotate=cfg.recall.annotate, now=now
+    )

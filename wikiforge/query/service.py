@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from wikiforge.llm.provider import LLMProvider
 from wikiforge.llm.safety import seal_source_data as _seal
@@ -95,20 +96,72 @@ async def extract_query(
     return await retriever.retrieve(query, depth=depth, owner_types=scope_owner_types(scope))
 
 
-def render_excerpts(targets: list[ChunkTarget], *, max_chars: int | None = None) -> str:
+def _age_days(ts_str: str | None, now: datetime) -> int | None:
+    """Whole days since an ISO timestamp; ``None`` when absent or unparseable."""
+    if not ts_str:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return max(0, int((now - ts).total_seconds() // 86400))
+
+
+def _annotation(t: ChunkTarget, now: datetime) -> str | None:
+    """One trusted-metadata line for an excerpt; ``None`` when nothing to say.
+
+    Missing fields are omitted, never guessed (spec §7). The line is locally
+    generated from stored numbers/enums — outside the sealed payload by design.
+    """
+    if t.owner_type == "article":
+        parts = ["article"]
+        if t.article_confidence is not None:
+            parts.append(f"confidence {t.article_confidence:.2f}")
+        age = _age_days(t.topic_last_researched_at, now)
+        if age is not None:
+            parts.append(f"researched {age}d ago")
+        if t.topic_volatility:
+            parts.append(f"{t.topic_volatility} volatility")
+        return f"({' · '.join(parts)})"
+    if t.owner_source_type == "dev_event":
+        parts = ["dev event"]
+        age = _age_days(t.owner_ts, now)
+        if age is not None:
+            parts.append(f"{age}d ago")
+        if t.owner_event_type:
+            parts.append(t.owner_event_type)
+        return f"({' · '.join(parts)})"
+    return None
+
+
+def render_excerpts(
+    targets: list[ChunkTarget],
+    *,
+    max_chars: int | None = None,
+    annotate: bool = False,
+    now: datetime | None = None,
+) -> str:
     """Render chunks as sealed <source_data> blocks for an agent's context.
 
     Every payload passes through ``seal_source_data`` so stored text can't break
-    out of its envelope (prompt-injection defense on the OUTPUT side).
+    out of its envelope (prompt-injection defense on the OUTPUT side). With
+    ``annotate`` (the recall path only), each block is prefixed by one trusted
+    epistemic-metadata line; the default render is byte-identical to before.
     """
     if not targets:
         return ""
+    now = now or datetime.now(UTC)
     parts = [RECALL_HEADER]
     for t in targets:
         text = t.text
         if max_chars is not None and len(text) > max_chars:
             text = text[:max_chars] + "…"
-        parts.append(
-            f"<source_data id='{t.owner_type}:{t.owner_id}#{t.seq}'>{_seal(text)}</source_data>"
-        )
+        block = f"<source_data id='{t.owner_type}:{t.owner_id}#{t.seq}'>{_seal(text)}</source_data>"
+        if annotate:
+            line = _annotation(t, now)
+            if line is not None:
+                block = f"{line}\n{block}"
+        parts.append(block)
     return "\n\n".join(parts)
