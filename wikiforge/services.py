@@ -718,16 +718,19 @@ async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
         edited = [t for t in turns if t.files]
         if not edited:
             return None
-        turn = edited[-1]
         try:
             llm = build_llm_provider(cfg, CostTracker(repo, cfg))
         except Exception:
             llm = None
-        source = await capture_event(
-            repo, request=turn.request, files=turn.files, event_type=None,
-            default_type="change", origin="hook", cfg=cfg, llm=llm, now=datetime.now(UTC),
-        )
-        if session_id is not None:
+        source: RawSource | None = None
+        for turn in edited:
+            captured = await capture_event(
+                repo, request=turn.request, files=turn.files, event_type=None,
+                default_type="change", origin="hook", cfg=cfg, llm=llm, now=datetime.now(UTC),
+            )
+            if captured is not None:
+                source = captured
+        if session_id is not None and source is not None:
             mark = last_entry_uuid(entries)
             if mark is not None:
                 await repo.set_watermark(

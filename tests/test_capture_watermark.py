@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from wikiforge.config.settings import write_default_config
+from wikiforge.services import run_capture_hook
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import CAPTURE_WATERMARK_DDL, Repository
 
@@ -17,6 +19,40 @@ async def _repo(tmp_path: Path):
     db = await Database.open(home, dim=4)
     await db.init_schema()
     return db, Repository(db)
+
+
+async def _init_wiki(home: Path) -> None:
+    """A fully-initialized wiki home, schema created and connection closed.
+
+    ``run_capture_hook`` opens its own ``Database`` connection against
+    ``home``, so the setup connection must be closed first (mirrors
+    ``tests/test_capture_service.py::_init_wiki``).
+    """
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "topics").mkdir(exist_ok=True)
+    write_default_config(home, wiki_name="T")
+    db = await Database.open(home, dim=4)
+    await db.init_schema()
+    await db.close()
+
+
+def _user_entry(uuid: str, text: str) -> dict:
+    return {"type": "user", "uuid": uuid, "message": {"role": "user", "content": text}}
+
+
+def _edit_entry(uuid: str, file_path: str) -> dict:
+    return {
+        "type": "assistant",
+        "uuid": uuid,
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "name": "Edit", "input": {"file_path": file_path}}],
+        },
+    }
+
+
+def _write_transcript(path: Path, entries: list[dict]) -> None:
+    path.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
 
 
 def test_watermark_ddl_is_single_source() -> None:
@@ -58,5 +94,96 @@ async def test_ensure_is_idempotent(tmp_path: Path) -> None:
         await repo.set_watermark("s1", "u1", "2026-07-20T10:00:00Z")
         await repo.ensure_capture_watermark()          # must not wipe existing rows
         assert await repo.get_watermark("s1") == "u1"
+    finally:
+        await db.close()
+
+
+# --- run_capture_hook integration: the watermark as exercised through the hook itself ---
+
+
+async def test_hook_captures_every_edited_turn_since_the_watermark(tmp_path: Path) -> None:
+    """Two edited turns since the watermark must both become dev events (Finding 1).
+
+    Under the old `edited[-1]` selection, only the SECOND turn's file
+    (`/r/b.py`) would be captured and the watermark would still advance past
+    both turns — silently and permanently losing the first turn's edit
+    (`/r/a.py`). This test fails under that old logic; see the fix report for
+    how that was verified.
+    """
+    home = tmp_path / "wiki"
+    await _init_wiki(home)
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        [
+            _user_entry("u1", "edit a"),
+            _edit_entry("u2", "/r/a.py"),
+            _user_entry("u3", "edit b"),
+            _edit_entry("u4", "/r/b.py"),
+        ],
+    )
+    stdin = json.dumps({"transcript_path": str(transcript), "session_id": "s1"})
+
+    result = await run_capture_hook(home, stdin)
+    assert result is not None
+
+    db = await Database.open(home, dim=4)
+    try:
+        rows = await db.fetchall(
+            "SELECT text FROM raw_sources WHERE source_type = ?", ("dev_event",)
+        )
+        assert len(rows) == 2  # one dev event per edited turn, not one for the whole batch
+        texts = [row["text"] for row in rows]
+        assert any("/r/a.py" in t for t in texts)
+        assert any("/r/b.py" in t for t in texts)
+    finally:
+        await db.close()
+
+
+async def test_hook_does_not_recapture_after_the_watermark_advances(tmp_path: Path) -> None:
+    """A second hook call over the same transcript/session is a clean no-op."""
+    home = tmp_path / "wiki"
+    await _init_wiki(home)
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(transcript, [_user_entry("u1", "edit a"), _edit_entry("u2", "/r/a.py")])
+    stdin = json.dumps({"transcript_path": str(transcript), "session_id": "s1"})
+
+    first = await run_capture_hook(home, stdin)
+    assert first is not None
+    second = await run_capture_hook(home, stdin)
+    assert second is None
+
+    db = await Database.open(home, dim=4)
+    try:
+        rows = await db.fetchall(
+            "SELECT text FROM raw_sources WHERE source_type = ?", ("dev_event",)
+        )
+        assert len(rows) == 1  # the second call created nothing additional
+    finally:
+        await db.close()
+
+
+async def test_hook_without_session_id_does_not_touch_the_watermark(tmp_path: Path) -> None:
+    """No `session_id` in the payload still captures, but never reads/writes a watermark."""
+    home = tmp_path / "wiki"
+    await _init_wiki(home)
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(transcript, [_user_entry("u1", "edit a"), _edit_entry("u2", "/r/a.py")])
+    stdin = json.dumps({"transcript_path": str(transcript)})  # no session_id key at all
+
+    result = await run_capture_hook(home, stdin)
+    assert result is not None
+
+    db = await Database.open(home, dim=4)
+    try:
+        rows = await db.fetchall(
+            "SELECT text FROM raw_sources WHERE source_type = ?", ("dev_event",)
+        )
+        assert len(rows) == 1  # capture still happened
+
+        repo = Repository(db)
+        await repo.ensure_capture_watermark()  # hook never created the table either
+        assert await repo.get_watermark("s1") is None
+        assert await repo.get_watermark("any-other-session") is None
     finally:
         await db.close()
