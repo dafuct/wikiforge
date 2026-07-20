@@ -181,7 +181,7 @@ class WhyConfig(BaseModel):
 
 
 class RecallConfig(BaseModel):
-    """UserPromptSubmit recall-hook settings (zero-LLM memory injection)."""
+    """Recall settings: the UserPromptSubmit hook, and its opt-in SubagentStart mirror."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -198,6 +198,11 @@ class RecallConfig(BaseModel):
     devlog_half_life_days: float = 14.0
     routing_hint: bool = False
     annotate: bool = True
+    # SubagentStart can mirror the same excerpts into a subagent's own context — a
+    # verified channel (see `recall`'s --subagent branch in wikiforge/cli/app.py) but
+    # a separate product decision from "recall works for the main session", since it
+    # applies to every subagent a workflow spawns. Off until an operator opts in.
+    subagents: bool = False
 
 
 class Config(BaseModel):

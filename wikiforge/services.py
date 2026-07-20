@@ -884,11 +884,16 @@ async def run_capture_precompact(home: Path, hook_stdin: str) -> RawSource | Non
         await db.close()
 
 
-async def run_recall_hook(home: Path, hook_stdin: str) -> str:
-    """Return sealed wiki excerpts for a UserPromptSubmit payload; "" on any skip.
+async def run_recall_hook(home: Path, hook_stdin: str, *, subagent: bool = False) -> str:
+    """Return sealed wiki excerpts for a UserPromptSubmit/SubagentStart payload; "" on any skip.
 
     Fast path: bail out before touching the embedding stack when the wiki DB
     is absent or holds no chunks, so non-wiki projects pay ~0 ms per prompt.
+
+    ``subagent=True`` is the SubagentStart delivery: ``hooks.json`` cannot read
+    config, so the hook always fires and this function decides, gated on
+    ``[recall] subagents`` (default ``False``) — the same shape as ``[capture]
+    auto`` gating ``capture --hook``.
     """
     from wikiforge.ops.recall import (
         classify_route,
@@ -904,6 +909,8 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     if not (home / CONFIG_FILENAME).exists():
         return ""
     cfg = load_config(home)
+    if subagent and not cfg.recall.subagents:
+        return ""
     if not cfg.recall.enabled:
         return ""
     prompt = parse_prompt_hook_stdin(hook_stdin)
