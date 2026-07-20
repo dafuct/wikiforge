@@ -33,9 +33,11 @@ _ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL | re.IGNO
 # A skill preamble is injected as a bare line plus the whole skill body after it.
 _SKILL_PREAMBLE_RE = re.compile(r"Base directory for this skill:.*", re.DOTALL)
 # A skill preamble ends with `ARGUMENTS: <the user's actual request>`. Measured on
-# 120 real transcripts: 28 of 46 preamble messages carry the request ONLY here, with
-# no <command-args> tag — so this tail is a second form of the same thing, not noise.
-_ARGUMENTS_TAIL_RE = re.compile(r"^ARGUMENTS:[ \t]*(.*)\Z", re.DOTALL | re.MULTILINE)
+# ~3000 real user messages on 2026-07-20: 29 carry exactly one ARGUMENTS line,
+# 0 carry more than one. An earlier ARGUMENTS: line inside a skill body must not
+# hijack the capture, so the LAST occurrence is used. Non-greedy (.*?) with $ ensures
+# each line is captured independently.
+_ARGUMENTS_TAIL_RE = re.compile(r"^ARGUMENTS:[ \t]*(.*?)$", re.MULTILINE)
 
 
 def strip_envelopes(text: str) -> str:
@@ -50,7 +52,11 @@ def strip_envelopes(text: str) -> str:
     """
     args = [m.group(1).strip() for m in _ARGS_RE.finditer(text)]
     cleaned = _ARGS_RE.sub(" ", text)
-    arguments_tail = [m.group(1).strip() for m in _ARGUMENTS_TAIL_RE.finditer(cleaned)]
+    # Use only the LAST ARGUMENTS: line to avoid hijacking by an earlier one
+    # inside the skill body. Measured on ~3000 real user messages on 2026-07-20:
+    # 29 carry exactly one ARGUMENTS line; 0 carry more than one.
+    tail_matches = list(_ARGUMENTS_TAIL_RE.finditer(cleaned))
+    arguments_tail = [tail_matches[-1].group(1).strip()] if tail_matches else []
     cleaned = _ARGUMENTS_TAIL_RE.sub(" ", cleaned)
     for pattern in _PAIRED_RE:
         cleaned = pattern.sub(" ", cleaned)
