@@ -114,7 +114,6 @@ dedup = true                # skip re-injecting chunks already recalled this ses
 devlog_half_life_days = 14   # dev-log freshness half-life for recall ordering; 0 disables
 routing_hint = false  # append a zero-LLM task-type hint for the orchestrator's model routing
 annotate = true       # prefix recall excerpts with confidence/staleness/type metadata
-subagents = false          # SubagentStart: give subagents the same wiki memory (verified channel)
 
 [why]
 guardrail = true           # PreToolUse hook: warn before editing a file with decision history
