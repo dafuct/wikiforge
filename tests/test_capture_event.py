@@ -258,3 +258,69 @@ def test_infer_event_type_extended_request_rules() -> None:
     assert infer_event_type("add a plan for the next cycle", []) == "spec"
     assert infer_event_type("напиши план", []) == "spec"
     assert infer_event_type("review this diff", []) == "chore"
+
+
+async def test_capture_event_records_git_context(tmp_path: Path) -> None:
+    from wikiforge.config.settings import load_config, write_default_config
+    from wikiforge.ops.capture import capture_event
+    from wikiforge.storage.db import Database
+    from wikiforge.storage.repository import Repository
+
+    home = tmp_path / "wiki"
+    home.mkdir()
+    (home / "topics").mkdir()
+    write_default_config(home, wiki_name="T")
+    db = await Database.open(home, dim=4)
+    await db.init_schema()
+
+    def runner(argv: list[str]) -> str:
+        if argv[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return "feat/x\n"
+        if argv[:3] == ["git", "rev-parse", "--short"]:
+            return "abc1234\n"
+        if argv == ["git", "rev-parse", "--git-dir"]:
+            return "/r/.git/worktrees/w1\n"
+        if argv == ["git", "rev-parse", "--git-common-dir"]:
+            return "/r/.git\n"
+        return ""
+
+    try:
+        src = await capture_event(
+            Repository(db), request="do it", files=["/r/a.py"], event_type=None,
+            default_type="change", origin="hook", cfg=load_config(home), llm=None,
+            now=_NOW, git_runner=runner,
+        )
+        assert src is not None
+        assert src.provenance["branch"] == "feat/x"
+        assert src.provenance["head_sha"] == "abc1234"
+        assert src.provenance["worktree"] == "1"
+    finally:
+        await db.close()
+
+
+async def test_capture_event_survives_git_failure(tmp_path: Path) -> None:
+    from wikiforge.config.settings import load_config, write_default_config
+    from wikiforge.ops.capture import capture_event
+    from wikiforge.storage.db import Database
+    from wikiforge.storage.repository import Repository
+
+    home = tmp_path / "wiki2"
+    home.mkdir()
+    (home / "topics").mkdir()
+    write_default_config(home, wiki_name="T")
+    db = await Database.open(home, dim=4)
+    await db.init_schema()
+
+    def boom(argv: list[str]) -> str:
+        raise RuntimeError("no git here")
+
+    try:
+        src = await capture_event(
+            Repository(db), request="do it", files=["/r/a.py"], event_type=None,
+            default_type="change", origin="hook", cfg=load_config(home), llm=None,
+            now=_NOW, git_runner=boom,
+        )
+        assert src is not None                     # capture must never fail on git
+        assert src.provenance["branch"] == ""
+    finally:
+        await db.close()
