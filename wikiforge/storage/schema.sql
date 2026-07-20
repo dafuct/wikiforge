@@ -180,6 +180,13 @@ CREATE TABLE IF NOT EXISTS recall_log (
     PRIMARY KEY (session_id, owner_type, owner_id, seq)
 );
 
+CREATE TABLE IF NOT EXISTS dev_event_files (
+    source_id INTEGER NOT NULL REFERENCES raw_sources(id),
+    path TEXT NOT NULL,
+    PRIMARY KEY (source_id, path)
+);
+CREATE INDEX IF NOT EXISTS idx_dev_event_files_path ON dev_event_files(path);
+
 -- `owner_id` is UNINDEXED (not part of the full-text index) but is mirrored
 -- here so callers can `SELECT owner_id FROM chunks_fts WHERE ... MATCH ...`
 -- without an extra join back to `chunks`.

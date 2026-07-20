@@ -49,6 +49,14 @@ _QUERIES = aiosql.from_path(
     Path(__file__).parent / "queries", "aiosqlite", mandatory_parameters=False
 )
 
+DEV_EVENT_FILES_DDL = """\
+CREATE TABLE IF NOT EXISTS dev_event_files (
+    source_id INTEGER NOT NULL REFERENCES raw_sources(id),
+    path TEXT NOT NULL,
+    PRIMARY KEY (source_id, path)
+);
+CREATE INDEX IF NOT EXISTS idx_dev_event_files_path ON dev_event_files(path);"""
+
 
 @dataclass
 class CitationSource:
@@ -915,6 +923,58 @@ class Repository:
         async with self._db.lock:
             await self._q.purge_recall_log(self._db.conn, cutoff=cutoff_iso)
             await self._db.conn.commit()
+
+    async def ensure_dev_event_files(self) -> None:
+        """Create the file→event index if missing; backfill once from provenance.
+
+        Pre-upgrade wikis lack the table. Backfill runs only when the table is
+        empty and dev events exist; INSERT OR IGNORE makes re-runs no-ops. The
+        index is derived data — rebuildable from provenance at any time.
+        """
+        async with self._db.lock:
+            await self._db.conn.executescript(DEV_EVENT_FILES_DDL)
+            await self._db.conn.commit()
+        row = await self._db.fetchone("SELECT EXISTS(SELECT 1 FROM dev_event_files) AS n")
+        if row is not None and row["n"]:
+            return
+        async for r in self._q.all_dev_event_provenance(self._db.conn):
+            files = str(json.loads(r["provenance"]).get("files", ""))
+            paths = [p for p in files.split(",") if p]
+            if paths:
+                await self.add_dev_event_files(int(r["id"]), paths)
+
+    async def add_dev_event_files(self, source_id: int, paths: list[str]) -> None:
+        """Record which files a dev event touched (idempotent per (event, path))."""
+        async with self._db.lock:
+            for path in paths:
+                await self._q.insert_dev_event_file(
+                    self._db.conn, source_id=source_id, path=path
+                )
+            await self._db.conn.commit()
+
+    async def dev_events_for_path(self, path: str, *, limit: int) -> list[RawSource]:
+        """Return dev events that touched ``path``, newest first.
+
+        Matches the stored (absolute) path exactly, or as a ``/``-anchored
+        suffix — so ``a.py`` never matches ``data.py``.
+        """
+        out: list[RawSource] = []
+        async for row in self._q.dev_events_for_path(self._db.conn, path=path, limit=limit):
+            out.append(
+                RawSource(
+                    id=row["id"],
+                    content_hash=row["content_hash"],
+                    canonical_url=row["canonical_url"],
+                    source_type=SourceType(row["source_type"]),
+                    title=row["title"],
+                    text=row["text"],
+                    fetched_at=row["fetched_at"],
+                    first_seen_session_id=row["first_seen_session_id"],
+                    persona=row["persona"],
+                    provenance=json.loads(row["provenance"]),
+                )
+            )
+        return out
 
     async def insert_inventory_item(self, item: InventoryItem) -> int:
         """Insert a catalogued inventory item and return its id."""

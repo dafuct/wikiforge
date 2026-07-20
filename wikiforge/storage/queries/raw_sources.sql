@@ -37,3 +37,18 @@ WHERE source_type = 'dev_event'
   AND COALESCE(json_extract(provenance, '$.ts'), fetched_at) < :cutoff
 ORDER BY id
 LIMIT :limit;
+
+-- name: all_dev_event_provenance
+SELECT id, provenance FROM raw_sources WHERE source_type = 'dev_event';
+
+-- name: insert_dev_event_file!
+INSERT OR IGNORE INTO dev_event_files (source_id, path) VALUES (:source_id, :path);
+
+-- name: dev_events_for_path
+SELECT rs.id, rs.content_hash, rs.canonical_url, rs.source_type, rs.title, rs.text,
+       rs.fetched_at, rs.first_seen_session_id, rs.persona, rs.provenance
+FROM dev_event_files def
+JOIN raw_sources rs ON rs.id = def.source_id
+WHERE def.path = :path OR def.path LIKE '%/' || :path
+ORDER BY rs.id DESC
+LIMIT :limit;
