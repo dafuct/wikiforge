@@ -250,6 +250,28 @@ def test_infer_event_type_path_signals() -> None:
     assert infer_event_type("ok", ["/r/src/main.py"]) is None
 
 
+def test_infer_event_type_path_signals_non_python_test_conventions() -> None:
+    from wikiforge.ops.capture import infer_event_type
+
+    # The test-path signal must recognise test conventions beyond Python's
+    # tests/ and test_*.py — Java/Maven, Go, and JS/TS all mark tests
+    # differently, and the live wiki's dev events span all of these.
+    assert infer_event_type("ok", ["/r/tests/test_x.py"]) == "chore"  # Python (already covered)
+    assert infer_event_type("ok", ["/r/viewer/src/test/java/dev/x/FooIT.java"]) == "chore"
+    assert (
+        infer_event_type("ok", ["/r/backend/src/test/java/com/x/PromptBuilderTest.java"])
+        == "chore"
+    )
+    assert infer_event_type("ok", ["/r/frontend/src/components/ReaderAudioBar.test.tsx"]) == "chore"
+    assert infer_event_type("ok", ["/r/pkg/thing_test.go"]) == "chore"
+
+    # Anchoring: a bare "test" substring inside an unrelated word must NOT
+    # fire — this is the whole point of matching path segments/infixes
+    # instead of a loose substring check.
+    assert infer_event_type("ok", ["/r/src/latest/config.py"]) is None
+    assert infer_event_type("ok", ["/r/src/contest/entry.py"]) is None
+
+
 def test_infer_event_type_extended_request_rules() -> None:
     from wikiforge.ops.capture import infer_event_type
 

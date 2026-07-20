@@ -123,7 +123,15 @@ def infer_event_type(request: str, files: list[str]) -> str | None:
     lowered = [f.lower() for f in files]
     if any("/specs/" in f or "/plans/" in f for f in lowered):
         return "spec"
-    if any("/tests/" in f or "/test_" in f or f.endswith("_test.py") for f in lowered):
+    if any(
+        "/tests/" in f
+        or "/test/" in f
+        or "/test_" in f
+        or "_test." in f
+        or ".test." in f
+        or ".spec." in f
+        for f in lowered
+    ):
         return "chore"
     if lowered and all(f.endswith(".md") for f in lowered):
         return "docs"
