@@ -106,7 +106,8 @@ def test_subprocess_timeout_default(tmp_path) -> None:
 def test_why_config_defaults_and_template(tmp_path) -> None:
     cfg = _cfg(tmp_path)  # reuse this file's helper: write_default_config + load_config
     assert cfg.why.guardrail is True
-    assert cfg.why.guardrail_types == ["bugfix", "design", "spec", "research"]
+    assert cfg.why.guardrail_exclude_types == ["chore", "docs"]
+    assert cfg.why.guardrail_types is None
     assert cfg.why.guardrail_max_events == 2
     assert cfg.recall.annotate is True
 
@@ -121,3 +122,18 @@ def test_legacy_config_without_why_block_loads(tmp_path) -> None:
     cfg = load_config(tmp_path)
     assert cfg.why.guardrail is True          # defaults kick in
     assert cfg.recall.annotate is True
+
+
+def test_guardrail_exclude_list_defaults_and_precedence(tmp_path) -> None:
+    from wikiforge.config.settings import WhyConfig
+
+    assert WhyConfig().guardrail_exclude_types == ["chore", "docs"]
+    assert WhyConfig().guardrail_types is None
+    assert WhyConfig().excluded_types() == {"chore", "docs"}
+    # Legacy whitelist alone: everything NOT whitelisted is excluded.
+    legacy = WhyConfig(guardrail_types=["bugfix", "design"])
+    assert "chore" in legacy.excluded_types()
+    assert "bugfix" not in legacy.excluded_types()
+    # Both present: the exclude-list wins.
+    both = WhyConfig(guardrail_types=["bugfix"], guardrail_exclude_types=["docs"])
+    assert both.excluded_types() == {"docs"}

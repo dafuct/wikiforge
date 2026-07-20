@@ -114,7 +114,7 @@ annotate = true       # prefix recall excerpts with confidence/staleness/type me
 
 [why]
 guardrail = true           # PreToolUse hook: warn before editing a file with decision history
-guardrail_types = ["bugfix", "design", "spec", "research"]   # decision-carrying event types
+guardrail_exclude_types = ["chore", "docs"]   # types the guardrail stays quiet about
 guardrail_max_events = 2   # max events per warning
 
 [consolidate]
