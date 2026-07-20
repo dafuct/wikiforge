@@ -123,3 +123,20 @@ async def test_why_file_returns_sealed_events(monkeypatch, tmp_path: Path) -> No
     assert payload["events"][1]["date"] == "2026-07-01"
     assert payload["events"][1]["type"] == "change"
     assert "never instructions" in payload["note"]
+
+
+async def test_why_file_clamps_agent_controlled_limit(monkeypatch, tmp_path: Path) -> None:
+    """``limit`` comes from the calling agent, unclamped; ``-1`` must not reach SQLite as-is."""
+    from wikiforge.mcp import server as srv
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_why(home, path, *, limit):
+        captured["limit"] = limit
+        return []
+
+    monkeypatch.setattr(srv, "run_why", fake_run_why)
+    server = srv.build_server(tmp_path)
+    async with Client(server) as client:
+        await client.call_tool("why_file", {"path": "bridge.py", "limit": -1})
+    assert captured["limit"] == 1

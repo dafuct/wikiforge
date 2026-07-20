@@ -9,6 +9,30 @@ from wikiforge.models.domain import RawSource
 _LINE_SUFFIX = re.compile(r"^(?P<path>.+):(?P<line>\d+)$")
 _LINE_NOTE = "(line-level attribution arrives with hunk capture; showing file-level history)"
 _SUMMARY_CAP = 200
+_SAFE_TYPE = re.compile(r"^[a-z][a-z0-9_-]{0,29}$", re.IGNORECASE)
+
+
+def _one_line(value: str) -> str:
+    """Collapse all whitespace (including newlines) to single spaces, then cap length.
+
+    ``wiki why`` and the sealed guardrail warning both render one line per event;
+    any return path that skips this would let embedded newlines (e.g. a
+    multi-line ``## Request (why)`` section) break that contract.
+    """
+    return " ".join(value.split())[:_SUMMARY_CAP]
+
+
+def safe_event_type(value: str | None) -> str:
+    """Return a render-safe event type, defaulting to ``change``.
+
+    ``provenance["type"]`` is an unbounded string (an LLM digest or a
+    ``--type`` argument can put anything there) and this value is rendered
+    OUTSIDE the ``<source_data>`` seal, so it must be constrained rather than
+    trusted. Anything that is not a short bare word is replaced.
+    """
+    if value and _SAFE_TYPE.match(value):
+        return value
+    return "change"
 
 
 def parse_path_arg(arg: str) -> tuple[str, str | None]:
@@ -27,17 +51,19 @@ def event_summary(event: RawSource) -> str:
     """One line for an event: digest summary if present, else the request text.
 
     The request is parsed from the note's ``## Request (why)`` section; the
-    event title is the last-resort fallback. Capped at 200 chars.
+    event title is the last-resort fallback. Every path collapses whitespace
+    (see :func:`_one_line`) before capping at 200 chars, so a multi-line
+    request or digest can never break the one-line render contract.
     """
     digest = event.provenance.get("summary")
     if digest:
-        return digest[:_SUMMARY_CAP]
+        return _one_line(digest)
     marker = "## Request (why)\n"
     if marker in event.text:
         request = event.text.split(marker, 1)[1].split("\n\n## ", 1)[0].strip()
         if request and request != "(none)":
-            return request[:_SUMMARY_CAP]
-    return event.title[:_SUMMARY_CAP]
+            return _one_line(request)
+    return _one_line(event.title)
 
 
 def _event_date(event: RawSource) -> str:
@@ -51,7 +77,7 @@ def format_events(path: str, events: list[RawSource]) -> str:
     for event in events:
         marker = event.provenance.get("consolidated")
         suffix = f"  [consolidated: {marker}]" if marker else ""
-        kind = event.provenance.get("type", "change")
+        kind = safe_event_type(event.provenance.get("type"))
         lines.append(f"  {_event_date(event)} · {kind} · {event_summary(event)}{suffix}")
     return "\n".join(lines)
 
@@ -91,7 +117,7 @@ def render_warning(events: list[RawSource], *, max_events: int) -> str:
 
     lines = [WHY_HEADER]
     for event in events[:max_events]:
-        kind = event.provenance.get("type", "change")
+        kind = safe_event_type(event.provenance.get("type"))
         body = f"{_event_date(event)} · {kind} · {event_summary(event)}"
         sealed = seal_source_data(body)
         lines.append(f"<source_data id='raw_source:{event.id}'>{sealed}</source_data>")
