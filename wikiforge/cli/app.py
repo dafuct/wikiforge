@@ -566,6 +566,7 @@ def why(
 
     if hook:
         try:
+            import json
             import sys
 
             from wikiforge.services import run_why_hook
@@ -574,7 +575,22 @@ def why(
                 run_why_hook(resolve_capture_home(home), sys.stdin.read())
             )
             if warning:
-                typer.echo(warning)
+                # PreToolUse plain stdout only reaches the debug log — it never
+                # reaches the model. `additionalContext` on an "allow" decision is
+                # the documented way to inform the model without gating the call;
+                # it lands beside the tool result as a system reminder.
+                # Verified against Claude Code 2.1.207 (hooks docs, "Context Flow").
+                typer.echo(
+                    json.dumps(
+                        {
+                            "hookSpecificOutput": {
+                                "hookEventName": "PreToolUse",
+                                "permissionDecision": "allow",
+                                "additionalContext": warning,
+                            }
+                        }
+                    )
+                )
         except Exception:
             pass  # a PreToolUse hook must never break the session
         return
