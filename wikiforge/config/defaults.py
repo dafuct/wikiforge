@@ -110,6 +110,12 @@ min_similarity = 0.80    # e5-small gate (2026-07-18): unrelated ~0.78-0.81, rel
 dedup = true                # skip re-injecting chunks already recalled this session
 devlog_half_life_days = 14   # dev-log freshness half-life for recall ordering; 0 disables
 routing_hint = false  # append a zero-LLM task-type hint for the orchestrator's model routing
+annotate = true       # prefix recall excerpts with confidence/staleness/type metadata
+
+[why]
+guardrail = true           # PreToolUse hook: warn before editing a file with decision history
+guardrail_types = ["bugfix", "design", "spec", "research"]   # decision-carrying event types
+guardrail_max_events = 2   # max events per warning
 
 [consolidate]
 period = "week"        # rollup granularity: week | month
