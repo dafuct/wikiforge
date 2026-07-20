@@ -327,6 +327,12 @@ async def capture_event(
         await index_owner_fts(repo, owner_type="raw_source", owner_id=source_id, text=note)
     except Exception:
         pass
+    try:
+        await repo.ensure_dev_event_files()
+        if files:
+            await repo.add_dev_event_files(source_id, files)
+    except Exception:
+        pass
     await ActivityRecorder(repo).record(
         "capture",
         {"type": resolved_type, "files": ",".join(files)},
