@@ -35,7 +35,7 @@ On the first session after install, a background hook runs `uv tool install` to 
 
 ## Automatic hooks
 
-The plugin wires four Claude Code hooks (all fail-safe — they never break a session):
+The plugin wires six Claude Code hooks (all fail-safe — they never break a session):
 
 - **`SessionStart`** — ensures the `wiki` CLI is installed, then `wiki capture --flush`: backfills
   dev-log vectors (free) and drains up to `[capture] auto_digest_batches` pending digests (default 1
@@ -43,6 +43,13 @@ The plugin wires four Claude Code hooks (all fail-safe — they never break a se
   starts the read-only Viewer UI (macOS/Linux).
 - **`Stop`** — `wiki capture --hook`: records a dev event (your request, changed files, git diff stat)
   after any file-editing task. Zero LLM at capture time.
+- **`SubagentStop`** — `wiki capture --subagent`: records what a subagent changed. Subagents run with
+  their own transcript, so without this their work never reaches the dev log. Keyed by the subagent's
+  own session id, so it can't double-capture with `Stop`. Off with `[capture] subagents = false`.
+- **`PreCompact`** — `wiki capture --precompact`: fires before a context compaction, while the
+  pre-compaction transcript still exists, and sweeps up the turns that edited no file — the design
+  discussion, the investigation, the rejected alternative. Those are exactly what compaction discards
+  first, and `Stop` never sees them. Off with `[capture] precompact = false`.
 - **`UserPromptSubmit`** — `wiki recall --hook`: injects the most relevant wiki/dev-log excerpts into
   the session. Zero LLM, multilingual, recency-weighted, and deduplicated within the session; it exits
   immediately for a project with no knowledge base yet.
