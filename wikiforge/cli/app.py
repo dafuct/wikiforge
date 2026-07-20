@@ -551,6 +551,29 @@ def recall(
 
 
 @app.command()
+def why(
+    path: str = typer.Argument(
+        ..., help="File path (relative suffix or absolute); path:line accepted."
+    ),
+    home: str | None = HomeOption,
+    limit: int = typer.Option(5, "--limit", help="Max events to show."),
+) -> None:
+    """Show WHY a file is the way it is — the dev events that touched it (zero LLM)."""
+    from wikiforge.ops.why import format_events, parse_path_arg
+    from wikiforge.paths import resolve_capture_home
+    from wikiforge.services import run_why
+
+    clean_path, note = parse_path_arg(path)
+    events = asyncio.run(run_why(resolve_capture_home(home), clean_path, limit=limit))
+    if note:
+        typer.echo(note)
+    if not events:
+        typer.echo(f"No recorded decisions touch {clean_path}.")
+        return
+    typer.echo(format_events(clean_path, events))
+
+
+@app.command()
 def consolidate(
     home: str | None = HomeOption,
     if_auto: bool = typer.Option(
