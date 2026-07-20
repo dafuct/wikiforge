@@ -32,12 +32,13 @@ _PAIRED_RE = [
 _ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL | re.IGNORECASE)
 # A skill preamble is injected as a bare line plus the whole skill body after it.
 _SKILL_PREAMBLE_RE = re.compile(r"Base directory for this skill:.*", re.DOTALL)
-# A skill preamble ends with `ARGUMENTS: <the user's actual request>`. Measured on
-# ~3000 real user messages on 2026-07-20: 29 carry exactly one ARGUMENTS line,
-# 0 carry more than one. An earlier ARGUMENTS: line inside a skill body must not
-# hijack the capture, so the LAST occurrence is used. Non-greedy (.*?) with $ ensures
-# each line is captured independently.
-_ARGUMENTS_TAIL_RE = re.compile(r"^ARGUMENTS:[ \t]*(.*?)$", re.MULTILINE)
+# The trailing `ARGUMENTS: <request>` of a skill preamble is a second form of
+# <command-args>. Match only the MARKER: the request itself runs to the end of the
+# message and may span many lines (measured: 5 of 29 real tails are multi-line), so it
+# is sliced rather than captured by the regex. The LAST marker wins — a skill body that
+# documents its own `ARGUMENTS:` section must not hijack the user's real request
+# (measured: 29 of ~3000 messages carry exactly one marker, 0 carry more).
+_ARGUMENTS_MARKER_RE = re.compile(r"^ARGUMENTS:[ \t]*", re.MULTILINE)
 
 
 def strip_envelopes(text: str) -> str:
@@ -52,12 +53,15 @@ def strip_envelopes(text: str) -> str:
     """
     args = [m.group(1).strip() for m in _ARGS_RE.finditer(text)]
     cleaned = _ARGS_RE.sub(" ", text)
-    # Use only the LAST ARGUMENTS: line to avoid hijacking by an earlier one
+    # Use only the LAST ARGUMENTS: marker to avoid hijacking by an earlier one
     # inside the skill body. Measured on ~3000 real user messages on 2026-07-20:
-    # 29 carry exactly one ARGUMENTS line; 0 carry more than one.
-    tail_matches = list(_ARGUMENTS_TAIL_RE.finditer(cleaned))
-    arguments_tail = [tail_matches[-1].group(1).strip()] if tail_matches else []
-    cleaned = _ARGUMENTS_TAIL_RE.sub(" ", cleaned)
+    # 29 carry exactly one ARGUMENTS marker; 0 carry more than one.
+    marker_matches = list(_ARGUMENTS_MARKER_RE.finditer(cleaned))
+    arguments_tail: list[str] = []
+    if marker_matches:
+        last = marker_matches[-1]
+        arguments_tail = [cleaned[last.end() :].strip()]
+        cleaned = cleaned[: last.start()]
     for pattern in _PAIRED_RE:
         cleaned = pattern.sub(" ", cleaned)
     cleaned = _SKILL_PREAMBLE_RE.sub(" ", cleaned)

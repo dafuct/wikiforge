@@ -128,6 +128,32 @@ def test_arguments_tail_uses_the_last_occurrence() -> None:
     assert "optional parameters" not in result
 
 
+def test_arguments_tail_preserves_a_multi_line_request() -> None:
+    """A multi-line request after the last ARGUMENTS: marker must survive intact.
+
+    Regression test for 54ba30b: a non-greedy per-line capture truncated the
+    request to its first line. Measured on 120 real transcripts on 2026-07-20:
+    5 of 29 recovered ARGUMENTS: tails span multiple lines.
+    """
+    line_one = "Please refactor the retry logic in the sync bridge."
+    line_three = "Also add coverage for the timeout-during-retry path."
+    text = (
+        "<command-message>superpowers:brainstorming</command-message>\n"
+        "<command-name>/superpowers:brainstorming</command-name>\n"
+        "Base directory for this skill: "
+        "/Users/x/.claude/plugins/cache/superpowers/skills/brainstorming\n\n"
+        f"{_SKILL_BODY}"
+        f"ARGUMENTS: {line_one}\n"
+        "\n"
+        f"{line_three}"
+    )
+    result = strip_envelopes(text)
+    # All three lines of the request — including the blank line between them — survive.
+    assert result.splitlines() == [line_one, "", line_three]
+    for word in ("Brainstorming", "clarifying", "design doc", "implementation"):
+        assert word not in result
+
+
 def test_iter_turns_recovers_the_request_from_a_skill_message() -> None:
     """The fix must reach real turn extraction, not just the strip_envelopes helper."""
     entries = [_user(_skill_message(_UKRAINIAN_REQUEST), uuid="u1")]
