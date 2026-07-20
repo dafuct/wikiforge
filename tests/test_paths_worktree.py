@@ -31,13 +31,35 @@ def test_resolve_capture_home_prefers_main_repo_wiki(tmp_path: Path, monkeypatch
     (main / ".wikiforge").mkdir()
     worktree = tmp_path / "repo" / ".claude" / "worktrees" / "agent-1"
     worktree.mkdir(parents=True)
+    # Also create .wikiforge in the worktree cwd to test precedence.
+    (worktree / ".wikiforge").mkdir()
     monkeypatch.chdir(worktree)
 
     import wikiforge.paths as paths
 
     monkeypatch.setattr(paths, "git_main_root", lambda runner=None: main)
-    # From inside the worktree, capture must still target the MAIN repo's wiki.
+    # From inside the worktree with .wikiforge in both locations,
+    # capture must prefer the MAIN repo's wiki over cwd's.
     assert resolve_capture_home() == main / ".wikiforge"
+
+
+def test_resolve_capture_home_falls_through_when_main_repo_has_no_wiki(
+    tmp_path: Path, monkeypatch
+) -> None:
+    main = tmp_path / "repo"
+    (main / ".git").mkdir(parents=True)
+    # Main repo exists but has NO .wikiforge.
+    worktree = tmp_path / "repo" / ".claude" / "worktrees" / "agent-1"
+    worktree.mkdir(parents=True)
+    # But cwd does have .wikiforge.
+    (worktree / ".wikiforge").mkdir()
+    monkeypatch.chdir(worktree)
+
+    import wikiforge.paths as paths
+
+    monkeypatch.setattr(paths, "git_main_root", lambda runner=None: main)
+    # When the main repo has no .wikiforge, fall through to cwd's.
+    assert resolve_capture_home() == worktree / ".wikiforge"
 
 
 def test_resolve_capture_home_falls_back_to_cwd_outside_git(tmp_path: Path, monkeypatch) -> None:
