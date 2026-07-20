@@ -68,7 +68,7 @@ _TYPE_RULES: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "spec",
-        re.compile(r"\b(spec|specification)\b|специфікац", re.IGNORECASE),
+        re.compile(r"\b(spec|specification|plan)\b|специфікац|\bплан", re.IGNORECASE),
     ),
     (
         "design",
@@ -90,7 +90,19 @@ _TYPE_RULES: list[tuple[str, re.Pattern[str]]] = [
     (
         "chore",
         re.compile(
-            r"\b(test|ci|lint|format|bump|upgrade)\b|dependenc|тест",
+            r"\b(test|ci|lint|format|bump|upgrade|review)\b|dependenc|тест|рев'ю",
+            re.IGNORECASE,
+        ),
+    ),
+    # "feature" is intentionally LAST, not first: it is the broadest rule
+    # (implement/add/build/create/introduce) and would otherwise shadow the
+    # more specific rules above it — e.g. "add a plan for the next cycle" must
+    # classify as "spec" (via the "plan" keyword), not "feature" (via "add").
+    # First-match-wins ordering means specific rules must be checked first.
+    (
+        "feature",
+        re.compile(
+            r"\b(implement|add|build|create|introduce)\b|\bреалізуй|\bдодай|\bствори",
             re.IGNORECASE,
         ),
     ),
@@ -98,18 +110,25 @@ _TYPE_RULES: list[tuple[str, re.Pattern[str]]] = [
 
 
 def infer_event_type(request: str, files: list[str]) -> str | None:
-    """Classify a dev event by keyword rules — no LLM. ``None`` when nothing matches.
+    """Classify a dev event by keyword rules, then directory signals — no LLM.
 
-    Request-text rules are checked in order (first match wins), then file-path
-    signals: an all-Markdown change is docs, test-path changes are chores.
+    Request-text rules are checked in order (first match wins); ``None`` when
+    nothing matches either signal. When no text rule fires, file-path signals
+    take over: specs/plans paths are spec, test paths are chores, an
+    all-Markdown change (or anything under ``docs/``) is docs.
     """
     for label, pattern in _TYPE_RULES:
         if pattern.search(request):
             return label
-    if files and all(f.lower().endswith(".md") for f in files):
-        return "docs"
-    if any("test" in f.lower() for f in files):
+    lowered = [f.lower() for f in files]
+    if any("/specs/" in f or "/plans/" in f for f in lowered):
+        return "spec"
+    if any("/tests/" in f or "/test_" in f or f.endswith("_test.py") for f in lowered):
         return "chore"
+    if lowered and all(f.endswith(".md") for f in lowered):
+        return "docs"
+    if any("/docs/" in f for f in lowered):
+        return "docs"
     return None
 
 

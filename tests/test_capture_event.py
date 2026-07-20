@@ -213,9 +213,16 @@ async def test_sync_mode_still_calls_llm(tmp_path: Path) -> None:
         ("дослідити чому падає тест", [], "research"),
         ("refactor the capture module", [], "refactor"),
         ("bump dependencies and fix lint", [], "bugfix"),  # first matching rule wins
-        ("add retry logic", ["docs/guide.md", "docs/api.md"], "docs"),  # all-.md files
-        ("add retry logic", ["tests/test_retry.py"], "chore"),  # test paths
-        ("add retry logic", ["wikiforge/ops/retry.py"], None),  # no rule matches
+        # "add" now matches the new feature text-rule, which fires before file
+        # signals are ever consulted — so these three resolve to "feature"
+        # regardless of `files` (was docs/chore/None under the old rules,
+        # back when "add retry logic" matched no text rule at all). The
+        # all-.md/test-path/no-signal fallback branches these used to exercise
+        # are now covered with genuinely neutral text in
+        # test_infer_event_type_path_signals.
+        ("add retry logic", ["docs/guide.md", "docs/api.md"], "feature"),
+        ("add retry logic", ["tests/test_retry.py"], "feature"),
+        ("add retry logic", ["wikiforge/ops/retry.py"], "feature"),
         # "fixtures" must NOT match bugfix's "fix"; "test" -> chore
         ("update the test fixtures for the pipeline", ["a.py"], "chore"),
         # "cite" must NOT match chore's "ci"; "changelog" -> docs
@@ -227,3 +234,27 @@ async def test_sync_mode_still_calls_llm(tmp_path: Path) -> None:
 )
 def test_infer_event_type(request_text: str, files: list[str], expected: str | None) -> None:
     assert infer_event_type(request_text, files) == expected
+
+
+def test_infer_event_type_path_signals() -> None:
+    from wikiforge.ops.capture import infer_event_type
+
+    # Path signals fire when the request text is uninformative.
+    assert infer_event_type("ok", ["/r/docs/GUIDE.md"]) == "docs"
+    assert infer_event_type("ok", ["/r/tests/test_x.py"]) == "chore"
+    assert infer_event_type("ok", ["/r/docs/superpowers/specs/2026-01-01-x.md"]) == "spec"
+    assert infer_event_type("ok", ["/r/docs/superpowers/plans/2026-01-01-x.md"]) == "spec"
+    # Request text still wins over path signals.
+    assert infer_event_type("fix the crash", ["/r/docs/GUIDE.md"]) == "bugfix"
+    # Nothing to go on.
+    assert infer_event_type("ok", ["/r/src/main.py"]) is None
+
+
+def test_infer_event_type_extended_request_rules() -> None:
+    from wikiforge.ops.capture import infer_event_type
+
+    assert infer_event_type("implement the retry loop", []) == "feature"
+    assert infer_event_type("реалізуй новий ендпоінт", []) == "feature"
+    assert infer_event_type("add a plan for the next cycle", []) == "spec"
+    assert infer_event_type("напиши план", []) == "spec"
+    assert infer_event_type("review this diff", []) == "chore"
