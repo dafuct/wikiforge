@@ -180,15 +180,6 @@ It captures **uncommitted** work, so you never have to commit for the wiki to re
   epistemic status, e.g. `(article · confidence 0.61 · researched 42d ago · HIGH volatility)` or
   `(dev event · 3d ago · bugfix)`, so the agent knows how far to trust it; missing fields are omitted,
   never guessed).
-- **Subagent memory (opt-in, default off):** a subagent starts with an empty context and never sees
-  the wiki, so the same re-exploration cost recall exists to eliminate gets paid again per subagent. A
-  `SubagentStart` hook (`wiki recall --hook --subagent`) can mirror the identical excerpts into the
-  **subagent's own context** — it wraps the same payload in a `hookSpecificOutput.additionalContext`
-  envelope, which Claude Code injects into the subagent's transcript, not the parent session's (verified
-  against Claude Code 2.1.207's hooks reference, `SubagentStart` section). It ships **off by default**:
-  `hooks.json` cannot read `config.toml`, so the hook always fires and `[recall] subagents` (default
-  `false`) decides whether it does anything — set it to `true` to give every subagent a workflow spawns
-  the same wiki memory as the main session.
 - **Privacy / control:** the raw request is stored (best-effort secret redaction). Turn capture
   off with `[capture] auto = false`, or raw-only with `summarize = "off"`, in `config.toml`.
 
@@ -287,7 +278,6 @@ local_dim = 384               # vector dim when using local
 [recall]                      # UserPromptSubmit memory injection (see "Agent memory")
 min_similarity = 0.80         # e5-small gate; dedup, devlog_half_life_days, routing_hint also here
 annotate = true               # prefix excerpts with confidence / staleness / event type
-subagents = false             # SubagentStart: also mirror excerpts into subagents (off by default)
 
 [why]                         # decision memory (see "Why is this code the way it is?")
 guardrail = true              # PreToolUse: warn before editing a file with decision history
@@ -423,7 +413,7 @@ These are deliberate scoping decisions, not oversights:
 - **Dev events are never compiled into articles.** They stay raw, searchable sources — the dev log is history, not synthesized knowledge.
 - **The recall similarity gate is tuned for the default `multilingual-e5-small` embedder.** Its 0.80 threshold was calibrated by measurement on a live wiki (unrelated uk+en prompts sit ~0.78–0.81, relevant ones ~0.80–0.90). If you switch embedding models, re-measure it and run `wiki reindex --embeddings` — these models have a high similarity floor, and a threshold below it makes recall inject noise into every prompt.
 - **Dev-event attribution is file-level, and events carry no commit anchor.** Capture records the files a change touched (that is what `wiki why` indexes), not hunk line ranges, and deliberately captures *uncommitted* work — so an event is not tied to a branch or a SHA. `wiki why <path>:52` therefore accepts the line and ignores it.
-- **Subagents do not receive wiki memory unless you opt in.** The `SubagentStart` delivery channel is verified to work (Claude Code 2.1.207 injects `additionalContext` into the subagent's own transcript), but `[recall] subagents` defaults to `false` — enabling it is a separate decision from "recall works for the main session" because it applies to every subagent every workflow spawns, not a one-off. A channel that silently delivers nothing while looking enabled is worse than an absent feature, so the default stays off until you set it explicitly.
+- **Subagents do not receive wiki memory.** The `SubagentStart` hook's `additionalContext` output does reach a subagent's own context (verified against Claude Code's hooks reference), but the hook's stdin payload carries no `prompt`/task field to retrieve against — its documented fields are `session_id`, `transcript_path`, `hook_event_name`, `permission_mode`, `agent_id`, and `agent_type`, and the event's schema isn't otherwise documented (tracking issue: [anthropics/claude-code#19170](https://github.com/anthropics/claude-code/issues/19170)) — so there is nothing to key retrieval on. `SubagentStop` capture (recording what a subagent changed) is unaffected and does work.
 
 ### Deferred toggles (not built)
 

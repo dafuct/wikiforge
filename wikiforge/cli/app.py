@@ -563,9 +563,6 @@ def recall(
     hook: bool = typer.Option(
         False, "--hook", help="Read Claude Code UserPromptSubmit JSON from stdin."
     ),
-    subagent: bool = typer.Option(
-        False, "--subagent", help="Emit the SubagentStart envelope instead of plain stdout."
-    ),
 ) -> None:
     """Print relevant wiki excerpts for a prompt (UserPromptSubmit hook; zero LLM calls)."""
     if not hook:
@@ -578,33 +575,9 @@ def recall(
         from wikiforge.services import run_recall_hook
 
         target_home = resolve_capture_home(home)
-        output = asyncio.run(run_recall_hook(target_home, sys.stdin.read(), subagent=subagent))
+        output = asyncio.run(run_recall_hook(target_home, sys.stdin.read()))
         if output:
-            if subagent:
-                import json
-
-                # Probe result (Task 8 delivery-channel check, cycle "capture-fidelity"):
-                # Claude Code's hooks reference documents that for SubagentStart,
-                # additionalContext "is injected into the conversation at the point
-                # where the subagent starts, appearing as a system reminder that Claude
-                # reads on the next model request", and that "for SubagentStart,
-                # notices and context appear in the subagent's transcript, not the
-                # parent conversation" — so this channel reaches the SUBAGENT's own
-                # context, not the parent session's. Verified against Claude Code
-                # 2.1.207. Source: https://code.claude.com/docs/en/hooks.md,
-                # SubagentStart section.
-                typer.echo(
-                    json.dumps(
-                        {
-                            "hookSpecificOutput": {
-                                "hookEventName": "SubagentStart",
-                                "additionalContext": output,
-                            }
-                        }
-                    )
-                )
-            else:
-                typer.echo(output)
+            typer.echo(output)
     except Exception as exc:  # hook fail-safe: never break the session
         typer.echo(f"recall failed: {exc}", err=True)
 
