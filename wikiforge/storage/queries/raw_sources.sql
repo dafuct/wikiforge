@@ -68,3 +68,13 @@ INSERT OR IGNORE INTO why_log (session_id, path, ts) VALUES (:session_id, :path,
 
 -- name: purge_why_log!
 DELETE FROM why_log WHERE ts < :cutoff;
+
+-- name: get_watermark^
+SELECT last_uuid FROM capture_watermark WHERE session_id = :session_id;
+
+-- name: set_watermark!
+INSERT INTO capture_watermark (session_id, last_uuid, ts) VALUES (:session_id, :last_uuid, :ts)
+ON CONFLICT(session_id) DO UPDATE SET last_uuid = excluded.last_uuid, ts = excluded.ts;
+
+-- name: purge_watermarks!
+DELETE FROM capture_watermark WHERE ts < :cutoff;

@@ -37,11 +37,12 @@ async def _event(repo, files: str, ts: str, event_type: str = "bugfix") -> RawSo
 
 
 def test_ddl_single_source_matches_schema() -> None:
-    from wikiforge.storage.repository import WHY_LOG_DDL
+    from wikiforge.storage.repository import CAPTURE_WATERMARK_DDL, WHY_LOG_DDL
 
     schema = (Path("wikiforge/storage/schema.sql")).read_text(encoding="utf-8")
     assert DEV_EVENT_FILES_DDL in schema
     assert WHY_LOG_DDL in schema
+    assert CAPTURE_WATERMARK_DDL in schema
 
 
 async def test_backfill_populates_once_and_is_idempotent(tmp_path: Path) -> None:

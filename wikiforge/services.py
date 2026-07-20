@@ -693,12 +693,9 @@ async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
     from datetime import UTC, datetime
 
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.ops.capture import (
-        capture_event,
-        extract_turn,
-        parse_hook_stdin,
-        read_transcript,
-    )
+    from wikiforge.ops.capture import capture_event, parse_hook_stdin
+    from wikiforge.ops.recall import parse_hook_session_id
+    from wikiforge.ops.transcript import last_entry_uuid, read_transcript, turns_since
 
     if not (home / CONFIG_FILENAME).exists():
         return None
@@ -708,20 +705,35 @@ async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
     transcript_path = parse_hook_stdin(hook_stdin)
     if transcript_path is None:
         return None
-    turn = extract_turn(read_transcript(Path(transcript_path)))
-    if not turn.files:
-        return None
+    session_id = parse_hook_session_id(hook_stdin)
+    entries = read_transcript(Path(transcript_path))
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:
         repo = Repository(db)
+        last_uuid = None
+        if session_id is not None:
+            await repo.ensure_capture_watermark()
+            last_uuid = await repo.get_watermark(session_id)
+        turns = turns_since(entries, last_uuid)
+        edited = [t for t in turns if t.files]
+        if not edited:
+            return None
+        turn = edited[-1]
         try:
             llm = build_llm_provider(cfg, CostTracker(repo, cfg))
         except Exception:
             llm = None
-        return await capture_event(
+        source = await capture_event(
             repo, request=turn.request, files=turn.files, event_type=None,
             default_type="change", origin="hook", cfg=cfg, llm=llm, now=datetime.now(UTC),
         )
+        if session_id is not None:
+            mark = last_entry_uuid(entries)
+            if mark is not None:
+                await repo.set_watermark(
+                    session_id, mark, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
+        return source
     finally:
         await db.close()
 

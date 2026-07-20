@@ -194,6 +194,12 @@ CREATE TABLE IF NOT EXISTS why_log (
     PRIMARY KEY (session_id, path)
 );
 
+CREATE TABLE IF NOT EXISTS capture_watermark (
+    session_id TEXT PRIMARY KEY,
+    last_uuid TEXT NOT NULL,
+    ts TEXT NOT NULL
+);
+
 -- `owner_id` is UNINDEXED (not part of the full-text index) but is mirrored
 -- here so callers can `SELECT owner_id FROM chunks_fts WHERE ... MATCH ...`
 -- without an extra join back to `chunks`.

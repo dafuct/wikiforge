@@ -65,6 +65,13 @@ CREATE TABLE IF NOT EXISTS why_log (
     PRIMARY KEY (session_id, path)
 );"""
 
+CAPTURE_WATERMARK_DDL = """\
+CREATE TABLE IF NOT EXISTS capture_watermark (
+    session_id TEXT PRIMARY KEY,
+    last_uuid TEXT NOT NULL,
+    ts TEXT NOT NULL
+);"""
+
 
 @dataclass
 class CitationSource:
@@ -1038,6 +1045,29 @@ class Repository:
         """Drop warning-log rows older than the cutoff (opportunistic hygiene)."""
         async with self._db.lock:
             await self._q.purge_why_log(self._db.conn, cutoff=cutoff_iso)
+            await self._db.conn.commit()
+
+    async def ensure_capture_watermark(self) -> None:
+        """Create the per-session capture watermark table if missing."""
+        await self._db.execute(CAPTURE_WATERMARK_DDL)
+
+    async def get_watermark(self, session_id: str) -> str | None:
+        """The uuid of the last transcript entry captured for this session."""
+        row = await self._q.get_watermark(self._db.conn, session_id=session_id)
+        return None if row is None else str(row["last_uuid"])
+
+    async def set_watermark(self, session_id: str, last_uuid: str, ts_iso: str) -> None:
+        """Record how far this session's transcript has been captured."""
+        async with self._db.lock:
+            await self._q.set_watermark(
+                self._db.conn, session_id=session_id, last_uuid=last_uuid, ts=ts_iso
+            )
+            await self._db.conn.commit()
+
+    async def purge_watermarks(self, cutoff_iso: str) -> None:
+        """Drop watermark rows older than the cutoff (opportunistic hygiene)."""
+        async with self._db.lock:
+            await self._q.purge_watermarks(self._db.conn, cutoff=cutoff_iso)
             await self._db.conn.commit()
 
     async def insert_inventory_item(self, item: InventoryItem) -> int:
