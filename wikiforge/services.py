@@ -839,10 +839,14 @@ async def run_why_hook(home: Path, hook_stdin: str) -> str:
             )
             if await repo.why_warned(session_id, path):
                 return ""
+        warning = render_warning(events, max_events=cfg.why.guardrail_max_events)
+        if not warning:
+            return ""
+        if session_id is not None:
             await repo.log_why_warning(
                 session_id, path, now.strftime("%Y-%m-%dT%H:%M:%SZ")
             )
-        return render_warning(events, max_events=cfg.why.guardrail_max_events)
+        return warning
     finally:
         await db.close()
 

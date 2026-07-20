@@ -84,7 +84,8 @@ def render_warning(events: list[RawSource], *, max_events: int) -> str:
 
     Event-derived text reaches a model, so each line is sealed inside a
     ``<source_data>`` envelope (injection defense); the header is trusted local
-    text and sits outside the seal.
+    text and sits outside the seal. Returns empty string when there are no
+    events to include (nothing to say).
     """
     from wikiforge.llm.safety import seal_source_data
 
@@ -94,4 +95,6 @@ def render_warning(events: list[RawSource], *, max_events: int) -> str:
         body = f"{_event_date(event)} · {kind} · {event_summary(event)}"
         sealed = seal_source_data(body)
         lines.append(f"<source_data id='raw_source:{event.id}'>{sealed}</source_data>")
+    if len(lines) == 1:  # Only header, no events
+        return ""
     return "\n".join(lines)
