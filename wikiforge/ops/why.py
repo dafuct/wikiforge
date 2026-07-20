@@ -9,7 +9,10 @@ from wikiforge.models.domain import RawSource
 _LINE_SUFFIX = re.compile(r"^(?P<path>.+):(?P<line>\d+)$")
 _LINE_NOTE = "(line-level attribution arrives with hunk capture; showing file-level history)"
 _SUMMARY_CAP = 200
-_SAFE_TYPE = re.compile(r"^[a-z][a-z0-9_-]{0,29}$", re.IGNORECASE)
+# `\Z` (not `$`): Python's `$` also matches just before a trailing newline, which
+# would let "bugfix\n" through and break the one-line render contract in the recall
+# annotation — the surface that renders on every prompt.
+_SAFE_TYPE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,29}\Z")
 
 
 def _one_line(value: str) -> str:
