@@ -57,6 +57,14 @@ CREATE TABLE IF NOT EXISTS dev_event_files (
 );
 CREATE INDEX IF NOT EXISTS idx_dev_event_files_path ON dev_event_files(path);"""
 
+WHY_LOG_DDL = """\
+CREATE TABLE IF NOT EXISTS why_log (
+    session_id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    PRIMARY KEY (session_id, path)
+);"""
+
 
 @dataclass
 class CitationSource:
@@ -991,6 +999,29 @@ class Repository:
                 )
             )
         return out
+
+    async def ensure_why_log(self) -> None:
+        """Create the guardrail dedup table if missing (pre-upgrade wikis lack it)."""
+        await self._db.execute(WHY_LOG_DDL)
+
+    async def why_warned(self, session_id: str, path: str) -> bool:
+        """Whether this session was already warned about this file."""
+        row = await self._q.why_log_seen(self._db.conn, session_id=session_id, path=path)
+        return row is not None
+
+    async def log_why_warning(self, session_id: str, path: str, ts_iso: str) -> None:
+        """Record a delivered warning so the same session isn't warned twice."""
+        async with self._db.lock:
+            await self._q.insert_why_log(
+                self._db.conn, session_id=session_id, path=path, ts=ts_iso
+            )
+            await self._db.conn.commit()
+
+    async def purge_why_log(self, cutoff_iso: str) -> None:
+        """Drop warning-log rows older than the cutoff (opportunistic hygiene)."""
+        async with self._db.lock:
+            await self._q.purge_why_log(self._db.conn, cutoff=cutoff_iso)
+            await self._db.conn.commit()
 
     async def insert_inventory_item(self, item: InventoryItem) -> int:
         """Insert a catalogued inventory item and return its id."""

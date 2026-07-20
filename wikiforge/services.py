@@ -797,6 +797,56 @@ async def run_why(home: Path, path: str, *, limit: int = 5) -> list[RawSource]:
         await db.close()
 
 
+async def run_why_hook(home: Path, hook_stdin: str) -> str:
+    """Return a sealed decision-history warning for a PreToolUse payload; "" on any skip.
+
+    Zero LLM, zero embeddings, allow-only (the guardrail informs, never gates).
+    Skips silently when: no config, guardrail disabled, no DB, unparseable
+    payload, no decision-carrying events for the file, or this session was
+    already warned about this file.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from wikiforge.ops.why import parse_pretool_stdin, render_warning
+    from wikiforge.storage.db import DB_FILENAME
+
+    if not (home / CONFIG_FILENAME).exists():
+        return ""
+    cfg = load_config(home)
+    if not cfg.why.guardrail:
+        return ""
+    path, session_id = parse_pretool_stdin(hook_stdin)
+    if path is None:
+        return ""
+    if not (home / DB_FILENAME).exists():
+        return ""
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        await repo.ensure_dev_event_files()
+        events = await repo.dev_events_for_path(path, limit=25)
+        events = [
+            e for e in events
+            if e.provenance.get("type") in cfg.why.guardrail_types
+        ]
+        if not events:
+            return ""
+        now = datetime.now(UTC)
+        if session_id is not None:
+            await repo.ensure_why_log()
+            await repo.purge_why_log(
+                (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            )
+            if await repo.why_warned(session_id, path):
+                return ""
+            await repo.log_why_warning(
+                session_id, path, now.strftime("%Y-%m-%dT%H:%M:%SZ")
+            )
+        return render_warning(events, max_events=cfg.why.guardrail_max_events)
+    finally:
+        await db.close()
+
+
 async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
     """Backfill dev-log vectors; with ``digests`` also batch-summarize pending events."""
     from wikiforge.activity.cost import CostTracker

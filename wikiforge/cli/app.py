@@ -552,15 +552,38 @@ def recall(
 
 @app.command()
 def why(
-    path: str = typer.Argument(
-        ..., help="File path (relative suffix or absolute); path:line accepted."
+    path: str | None = typer.Argument(
+        None, help="File path (relative suffix or absolute); path:line accepted."
     ),
     home: str | None = HomeOption,
     limit: int = typer.Option(5, "--limit", help="Max events to show."),
+    hook: bool = typer.Option(
+        False, "--hook", help="Read Claude Code PreToolUse JSON from stdin (guardrail)."
+    ),
 ) -> None:
     """Show WHY a file is the way it is — the dev events that touched it (zero LLM)."""
-    from wikiforge.ops.why import format_events, parse_path_arg
     from wikiforge.paths import resolve_capture_home
+
+    if hook:
+        try:
+            import sys
+
+            from wikiforge.services import run_why_hook
+
+            warning = asyncio.run(
+                run_why_hook(resolve_capture_home(home), sys.stdin.read())
+            )
+            if warning:
+                typer.echo(warning)
+        except Exception:
+            pass  # a PreToolUse hook must never break the session
+        return
+
+    if path is None:
+        typer.echo("Error: provide a PATH or --hook", err=True)
+        raise typer.Exit(code=2)
+
+    from wikiforge.ops.why import format_events, parse_path_arg
     from wikiforge.services import run_why
 
     clean_path, note = parse_path_arg(path)

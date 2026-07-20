@@ -187,6 +187,13 @@ CREATE TABLE IF NOT EXISTS dev_event_files (
 );
 CREATE INDEX IF NOT EXISTS idx_dev_event_files_path ON dev_event_files(path);
 
+CREATE TABLE IF NOT EXISTS why_log (
+    session_id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    PRIMARY KEY (session_id, path)
+);
+
 -- `owner_id` is UNINDEXED (not part of the full-text index) but is mirrored
 -- here so callers can `SELECT owner_id FROM chunks_fts WHERE ... MATCH ...`
 -- without an extra join back to `chunks`.
