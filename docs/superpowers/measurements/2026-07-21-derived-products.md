@@ -174,7 +174,7 @@ $ uv run wiki impact development-log --home ~/wiki
 **Observed output (verbatim):**
 
 ```
-Error: no topic matches 'development-log' — use --as file or --as topic to force another reading
+Error: no topic matches 'development-log' — use --as file or --as source to force another reading
 ```
 
 The task's assumption that this topic "should exist" does not hold either: `~/wiki` has
@@ -185,6 +185,36 @@ measurement (2026-07-21) — so nothing in this wiki has crossed the 14-day thre
 There is no `development-log` topic here not because of a defect, but because this wiki is
 simply too young relative to the default consolidation window; reporting the error verbatim
 rather than substituting a different, existing topic to make the run "succeed."
+
+**Command:**
+
+```
+$ uv run wiki impact 1 --home ~/wiki
+```
+
+**Observed output (verbatim):**
+
+```
+Impact of source: applied research on SQLite WAL mode
+  6 live claim(s) in 1 topic(s) rest on this.
+  · sqlite-wal-mode: A production incident found a 20GB WAL file next to a 2GB database due to checkpoint starvation from a leaked transaction.
+  · sqlite-wal-mode: Android's Room library enables WAL by default, with reported gains up to 4x write speed on ext4.
+  · sqlite-wal-mode: Apple's Core Data has defaulted to WAL since iOS 7 / OS X Mavericks.  [quote drifted]
+  · sqlite-wal-mode: Django only gained first-class WAL PRAGMA support at connection time in Django 5.1.  [quote drifted]
+  · sqlite-wal-mode: Expensify measured about 4M QPS on bare-metal hardware against a 447GB/10-billion-row database.  [quote drifted]
+  · sqlite-wal-mode: WAL lets readers and a single writer proceed concurrently without blocking each other.
+  research findings citing this source:
+    · applied: SQLite's Write-Ahead Logging (WAL) mode appends changes to a separate `-wal` file instead of writing directly to the database, enabling concurrent reads and writes without blocking. WAL is the default on Android (Room) and iOS (Core Data), powers distributed systems like LiteFS and Turso, and achieves production-scale performance (~4M QPS on bare metal in Expensify's Bedrock). However, operational challenges include checkpoint starvation causing massive WAL growth, incompatibility with NFS, and the need for careful PRAGMA configuration and monitoring.
+```
+
+Source id `1` (`applied research on SQLite WAL mode`) is a genuinely-cited source in `~/wiki`
+— confirmed with a direct count against the `citations` table (6 rows for `raw_source_id = 1`,
+the second-highest of any source) rather than assumed. Unlike the empty/erroring runs above,
+this one returns a populated blast radius: 6 live claims across 1 topic (`sqlite-wal-mode`),
+two of them flagged `[quote drifted]`, plus the one research finding that cites the source.
+**Note: this run was missing from the initial report** — §14.3 of the design spec called for
+three `wiki impact` acceptance runs (source, file, topic) and only the file and topic runs
+above were executed and recorded; this subsection fills that gap.
 
 ---
 
@@ -261,6 +291,7 @@ finding zero occurrences of "embed" anywhere in either module.
 | 2 | Cross-project mix in `~/wiki` | Multi-project | kazka 103, own-llmwiki 41, others 15 (of 159) |
 | 3a | `impact wikiforge/services.py` | Unspecified | Empty — "nothing recorded rests on this." |
 | 3b | `impact development-log` | Topic exists | **Does not exist — errors** (wiki too young: oldest event 9 days old, `min_age_days` 14) |
+| 3c | `impact 1` (genuinely-cited source) | Unspecified | 6 live claims, 1 topic — populated blast radius (added; missing from the initial report) |
 | 4 | `why README.md` anchoring | This-project-only, no leak | Confirmed — no fallback note, 2 own-llmwiki-only events |
 | 5a | `changelog` latency | Fast, no model load | 0.80 s real |
 | 5b | Embedder import in changelog/impact | Absent | Confirmed absent (static check) |
