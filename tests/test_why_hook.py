@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from wikiforge.cli.app import app
@@ -19,6 +20,19 @@ from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
 
 _NOW = datetime(2026, 7, 20, 9, 0, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_peer_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sandbox the machine-global peer registry for every test in this module.
+
+    ``run_why_hook`` now consults ``active_peers()`` (Task 9), which reads
+    ``$XDG_CONFIG_HOME/wikiforge/peers.toml`` even when no peer is ever
+    registered by the test itself — without this, these tests would depend on
+    (and could be made flaky by) whatever real registry happens to exist on
+    the machine running them.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
 
 
 def test_parse_pretool_stdin_variants() -> None:
@@ -116,6 +130,7 @@ async def test_zero_max_events_yields_no_warning_and_no_dedup_row(tmp_path: Path
 async def test_render_warning_empty_when_capped_to_zero() -> None:
     from datetime import UTC, datetime
 
+    from wikiforge.federation.fanout import Sourced
     from wikiforge.models.domain import RawSource
     from wikiforge.models.enums import SourceType
     from wikiforge.ops.why import render_warning
@@ -131,7 +146,7 @@ async def test_render_warning_empty_when_capped_to_zero() -> None:
     )
 
     # With max_events=0, should return ""
-    result = render_warning([event], max_events=0)
+    result = render_warning([Sourced("", event)], max_events=0)
     assert result == ""
 
 

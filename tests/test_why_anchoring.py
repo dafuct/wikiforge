@@ -44,46 +44,52 @@ async def _seed(home: Path, files_by_title: dict[str, list[str]]) -> None:
 
 
 async def test_relative_path_is_scoped_to_the_current_repo(
-    wiki_home: Path, monkeypatch: pytest.MonkeyPatch
+    wiki_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from wikiforge import services
 
+    # run_why now consults the machine-global peer registry; sandbox it so
+    # this test never depends on — or pollutes — a real one.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
     await services.init_wiki("T", wiki_home)
     await _seed(wiki_home, {"mine": ["/r/README.md"], "theirs": ["/other/README.md"]})
     monkeypatch.setattr(services, "repo_root", lambda **kw: "/r")
 
     events, fell_back = await services.run_why(wiki_home, "README.md", limit=5)
 
-    assert [e.title for e in events] == ["mine"]
+    assert [e.item.title for e in events] == ["mine"]
+    assert [e.origin for e in events] == [""]
     assert fell_back is False
 
 
 async def test_fallback_is_reported_when_the_repo_has_no_history(
-    wiki_home: Path, monkeypatch: pytest.MonkeyPatch
+    wiki_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from wikiforge import services
 
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
     await services.init_wiki("T", wiki_home)
     await _seed(wiki_home, {"theirs": ["/other/README.md"]})
     monkeypatch.setattr(services, "repo_root", lambda **kw: "/r")
 
     events, fell_back = await services.run_why(wiki_home, "README.md", limit=5)
 
-    assert [e.title for e in events] == ["theirs"]
+    assert [e.item.title for e in events] == ["theirs"]
     assert fell_back is True
 
 
 async def test_absolute_path_behaviour_is_unchanged(
-    wiki_home: Path, monkeypatch: pytest.MonkeyPatch
+    wiki_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Regression guard: the PreToolUse guardrail always passes an absolute path."""
     from wikiforge import services
 
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
     await services.init_wiki("T", wiki_home)
     await _seed(wiki_home, {"theirs": ["/other/README.md"]})
     monkeypatch.setattr(services, "repo_root", lambda **kw: "/r")
 
     events, fell_back = await services.run_why(wiki_home, "/other/README.md", limit=5)
 
-    assert [e.title for e in events] == ["theirs"]
+    assert [e.item.title for e in events] == ["theirs"]
     assert fell_back is False

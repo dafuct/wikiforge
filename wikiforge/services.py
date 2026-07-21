@@ -40,7 +40,7 @@ from wikiforge.models.domain import (
 )
 from wikiforge.models.enums import ExportTarget, OutputKind, QueryDepth
 from wikiforge.ops.flush import FlushStats
-from wikiforge.ops.scope import events_for_paths, repo_root
+from wikiforge.ops.scope import events_for_absolute, events_for_paths, repo_root
 from wikiforge.output.exporter import Exporter
 from wikiforge.output.generator import OutputGenerator
 from wikiforge.query.service import QueryResult
@@ -51,6 +51,7 @@ from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
 
 if TYPE_CHECKING:
+    from wikiforge.federation.fanout import Sourced
     from wikiforge.ops.consolidate import ConsolidateStats
     from wikiforge.ops.impact import AuditResult
     from wikiforge.search.retriever import Reranker
@@ -992,7 +993,9 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     return excerpts or hint
 
 
-async def run_why(home: Path, path: str, *, limit: int = 5) -> tuple[list[RawSource], bool]:
+async def run_why(
+    home: Path, path: str, *, limit: int = 5
+) -> tuple[list[Sourced[RawSource]], bool]:
     """Decision history for ``path``, newest first, scoped to the current repo.
 
     Returns ``(events, fell_back)``. A relative path is anchored to the
@@ -1005,22 +1008,55 @@ async def run_why(home: Path, path: str, *, limit: int = 5) -> tuple[list[RawSou
     Never constructs an embedding or LLM provider — the lookup is pure SQL over
     the ``dev_event_files`` index (ensured + backfilled on first use). A home
     with no config or no database returns ``([], False)``.
+
+    Federated (cycle 4): the local read runs first, with ``read_only=False`` so
+    this wiki's own index is still ensured/backfilled exactly as before. Every
+    active peer (``[federation] enabled`` plus the machine-global registry) is
+    then read with ``read_only=True`` — a peer is never written to — and merged
+    in, newest-first by :func:`~wikiforge.ops.why.event_ts`, with the combined
+    list capped to ``limit`` (each wiki may itself return up to ``limit``).
+    ``fell_back`` still describes only the local lookup; a peer's contribution
+    is signalled per-event via ``Sourced.origin``, not by this flag.
     """
+    from wikiforge.federation.fanout import Sourced, active_peers, fan_out
+    from wikiforge.ops.why import event_ts
     from wikiforge.storage.db import DB_FILENAME
 
     if not (home / CONFIG_FILENAME).exists() or not (home / DB_FILENAME).exists():
         return [], False
     cfg = load_config(home)
-    db = await Database.open(home, dim=effective_embedding_dim(cfg))
-    try:
-        repo = Repository(db)
-        await repo.ensure_dev_event_files()
+    root = repo_root()
+    dim = effective_embedding_dim(cfg)
+
+    async def read(repo: Repository, *, read_only: bool) -> list[RawSource]:
         if path.startswith("/"):
-            return await repo.dev_events_for_path(path, limit=limit), False
-        found = await events_for_paths(repo, [path], root=repo_root(), limit=limit)
-        return found.events, found.fell_back
+            return await events_for_absolute(repo, path, limit=limit, read_only=read_only)
+        found = await events_for_paths(repo, [path], root=root, limit=limit, read_only=read_only)
+        return found.events
+
+    db = await Database.open(home, dim=dim)
+    try:
+        local_repo = Repository(db)
+        local_events = await read(local_repo, read_only=False)
+        fell_back = False
+        if not path.startswith("/"):
+            fell_back = (
+                await events_for_paths(local_repo, [path], root=root, limit=limit)
+            ).fell_back
+        merged = [Sourced(origin="", item=e) for e in local_events]
+        merged.extend(
+            await fan_out(
+                active_peers(cfg),
+                lambda repo: read(repo, read_only=True),
+                local=None,
+                dim=dim,
+                timeout_ms=cfg.federation.peer_timeout_ms,
+            )
+        )
     finally:
         await db.close()
+    merged.sort(key=lambda s: event_ts(s.item), reverse=True)
+    return merged[:limit], fell_back
 
 
 async def run_why_hook(home: Path, hook_stdin: str) -> str:
@@ -1028,12 +1064,20 @@ async def run_why_hook(home: Path, hook_stdin: str) -> str:
 
     Zero LLM, zero embeddings, allow-only (the guardrail informs, never gates).
     Skips silently when: no config, guardrail disabled, no DB, unparseable
-    payload, no decision-carrying events for the file, or this session was
-    already warned about this file.
+    payload, no decision-carrying events for the file — locally OR on any peer,
+    see below — or this session was already warned about this file.
+
+    Federated (cycle 4): local events are fetched and type-filtered exactly as
+    before, then every active peer is read (``read_only=True`` — a peer is
+    never written to) and merged in, newest-first, before the "nothing to warn
+    about" check. That check deliberately runs on the merged list rather than
+    on local results alone: a file with no local history but real history on a
+    peer must still warn.
     """
     from datetime import UTC, datetime, timedelta
 
-    from wikiforge.ops.why import parse_pretool_stdin, render_warning
+    from wikiforge.federation.fanout import Sourced, active_peers, fan_out
+    from wikiforge.ops.why import event_ts, parse_pretool_stdin, render_warning
     from wikiforge.storage.db import DB_FILENAME
 
     if not (home / CONFIG_FILENAME).exists():
@@ -1055,7 +1099,23 @@ async def run_why_hook(home: Path, hook_stdin: str) -> str:
             e for e in events
             if cfg.why.warns_for(e.provenance.get("type") or "change")
         ]
-        if not events:
+
+        async def peer_read(peer_repo: Repository) -> list[RawSource]:
+            found = await events_for_absolute(peer_repo, path, limit=25, read_only=True)
+            return [e for e in found if cfg.why.warns_for(e.provenance.get("type") or "change")]
+
+        merged = [Sourced(origin="", item=e) for e in events]
+        merged.extend(
+            await fan_out(
+                active_peers(cfg),
+                peer_read,
+                local=None,
+                dim=effective_embedding_dim(cfg),
+                timeout_ms=cfg.federation.peer_timeout_ms,
+            )
+        )
+        merged.sort(key=lambda s: event_ts(s.item), reverse=True)
+        if not merged:
             return ""
         now = datetime.now(UTC)
         if session_id is not None:
@@ -1072,7 +1132,7 @@ async def run_why_hook(home: Path, hook_stdin: str) -> str:
                 pass  # opportunistic hygiene only — must never break the guardrail
             if await repo.why_warned(session_id, path):
                 return ""
-        warning = render_warning(events, max_events=cfg.why.guardrail_max_events)
+        warning = render_warning(merged, max_events=cfg.why.guardrail_max_events)
         if not warning:
             return ""
         if session_id is not None:
