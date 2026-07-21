@@ -53,7 +53,10 @@ def load_registry_report(path: Path | None = None) -> tuple[list[PeerRef], str |
     try:
         with target.open("rb") as fh:
             data = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, ValueError) as exc:
+        # ValueError covers tomllib.TOMLDecodeError (a ValueError subclass) and
+        # UnicodeDecodeError (invalid UTF-8 bytes) — both are "malformed file",
+        # not a programming error, and must degrade rather than propagate.
         return [], f"{target} is unreadable: {exc}"
 
     entries = data.get("peer")

@@ -60,6 +60,20 @@ def test_entries_missing_required_keys_are_skipped(tmp_path: Path) -> None:
     assert error is not None and "nohome" in error
 
 
+def test_invalid_utf8_degrades_with_a_reported_reason(tmp_path: Path) -> None:
+    """Bytes that aren't valid UTF-8 are also a "malformed file", not a crash.
+
+    tomllib.load raises UnicodeDecodeError (not TOMLDecodeError) for this
+    case; both are ValueError subclasses and must be caught the same way.
+    """
+    path = tmp_path / "peers.toml"
+    path.write_bytes(b'alias = "\xff\xfe not utf-8"\n')
+    assert load_registry(path) == []
+    peers, error = load_registry_report(path)
+    assert peers == []
+    assert error is not None and "peers.toml" in error
+
+
 def test_slugify_alias() -> None:
     """Aliases come from wiki_name and must be short, lowercase and path-safe."""
     assert slugify_alias("My Wiki") == "my-wiki"
