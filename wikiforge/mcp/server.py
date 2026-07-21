@@ -201,4 +201,15 @@ def build_server(home: Path) -> FastMCP:
         )
         return seal_source_data(text)
 
+    @mcp.tool
+    async def impact_report(target: str, limit: int = 20, as_kind: str | None = None) -> str:
+        """What rests on a source, file, or topic — read-only blast radius (zero LLM)."""
+        from wikiforge.llm.safety import seal_source_data
+        from wikiforge.services import run_impact
+
+        text = await run_impact(
+            home, target, limit=max(1, min(limit, 200)), as_kind=as_kind
+        )
+        return seal_source_data(text)
+
     return mcp

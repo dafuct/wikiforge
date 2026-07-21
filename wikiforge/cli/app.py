@@ -715,6 +715,32 @@ def changelog(
     typer.echo(text)
 
 
+@app.command()
+def impact(
+    target: str = typer.Argument(..., help="Source URL/hash/id, file path, or topic slug."),
+    home: str | None = HomeOption,
+    limit: int = typer.Option(20, "--limit", help="Max claims / events / sources to show."),
+    as_kind: str | None = typer.Option(
+        None, "--as", help="Force the reading: source | file | topic."
+    ),
+) -> None:
+    """Show what rests on a source, a file, or a topic — the blast radius."""
+    from wikiforge.paths import resolve_capture_home
+    from wikiforge.services import run_impact
+
+    if as_kind is not None and as_kind not in ("source", "file", "topic"):
+        typer.echo("Error: --as must be one of: source, file, topic", err=True)
+        raise typer.Exit(code=1)
+    try:
+        text = asyncio.run(
+            run_impact(resolve_capture_home(home), target, limit=limit, as_kind=as_kind)
+        )
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(text)
+
+
 def main() -> None:
     """Console-script entry point."""
     app()
