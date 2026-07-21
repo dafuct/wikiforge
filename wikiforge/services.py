@@ -1135,3 +1135,48 @@ async def run_consolidate(home: Path, *, only_if_auto: bool = False) -> Consolid
         )
     finally:
         await db.close()
+
+
+async def run_changelog(
+    home: Path,
+    spec: str | None,
+    *,
+    limit: int = 50,
+    exclude_types: frozenset[str] = frozenset(),
+    prose: bool = False,
+) -> str:
+    """Render a why-annotated changelog for a git range.
+
+    Zero LLM unless ``prose`` is set, in which case one cheap call rewrites the
+    structured render. A prose failure degrades to the structured output rather
+    than losing it.
+    """
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.ops import changelog as changelog_ops
+
+    root = repo_root()
+    if not root:
+        raise ValueError("changelog needs a git repository")
+    rng = changelog_ops.resolve_range(spec)
+
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        log = await changelog_ops.build_changelog(
+            repo, rng, root=root, limit=limit, exclude_types=exclude_types
+        )
+        rendered = changelog_ops.format_changelog(log)
+        if not prose:
+            return rendered
+        try:
+            llm = build_llm_provider(cfg, CostTracker(repo, cfg))
+            return await changelog_ops.compose_prose(llm, cfg, rendered)
+        except Exception as exc:  # noqa: BLE001 - a failed nicety must not lose data
+            import sys
+
+            print(f"note: prose generation failed ({exc}); showing the structured changelog",
+                  file=sys.stderr)
+            return rendered
+    finally:
+        await db.close()
