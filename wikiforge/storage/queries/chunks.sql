@@ -37,11 +37,11 @@ SELECT vec_to_json(embedding) AS embedding FROM chunks_vec WHERE rowid = :rowid;
 SELECT EXISTS(SELECT 1 FROM chunks) AS n;
 
 -- name: recall_log_seen
-SELECT owner_type, owner_id, seq FROM recall_log WHERE session_id = :session_id;
+SELECT origin, owner_type, owner_id, seq FROM recall_log WHERE session_id = :session_id;
 
 -- name: insert_recall_log!
-INSERT OR IGNORE INTO recall_log (session_id, owner_type, owner_id, seq, ts)
-VALUES (:session_id, :owner_type, :owner_id, :seq, :ts);
+INSERT OR IGNORE INTO recall_log (session_id, origin, owner_type, owner_id, seq, ts)
+VALUES (:session_id, :origin, :owner_type, :owner_id, :seq, :ts);
 
 -- name: purge_recall_log!
 DELETE FROM recall_log WHERE ts < :cutoff;

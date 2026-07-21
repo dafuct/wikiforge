@@ -177,14 +177,18 @@ async def recall_excerpts(
         await repo.ensure_recall_log()
         await repo.purge_recall_log((now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"))
         seen = await repo.recall_seen(session_id)
-        kept = [(sim, t) for sim, t in kept if (t.owner_type, t.owner_id, t.seq) not in seen]
+        # "" is the local-wiki origin (see recall_seen/log_recall); every candidate
+        # here is local until Task 11 wires peer results into this function.
+        kept = [(sim, t) for sim, t in kept if ("", t.owner_type, t.owner_id, t.seq) not in seen]
     kept = kept[: cfg.recall.max_excerpts]
     if not kept:
         return ""
     chosen = [t for _, t in kept]
     if dedup:
         assert session_id is not None
-        await repo.log_recall(session_id, chosen, now.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        await repo.log_recall(
+            session_id, [("", t) for t in chosen], now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        )
     return render_excerpts(
         chosen, max_chars=cfg.recall.max_chars, annotate=cfg.recall.annotate, now=now
     )

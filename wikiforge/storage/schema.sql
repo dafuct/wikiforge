@@ -175,11 +175,12 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
 
 CREATE TABLE IF NOT EXISTS recall_log (
     session_id TEXT NOT NULL,
+    origin     TEXT NOT NULL DEFAULT '',
     owner_type TEXT NOT NULL,
-    owner_id INTEGER NOT NULL,
-    seq INTEGER NOT NULL,
-    ts TEXT NOT NULL,
-    PRIMARY KEY (session_id, owner_type, owner_id, seq)
+    owner_id   INTEGER NOT NULL,
+    seq        INTEGER NOT NULL,
+    ts         TEXT NOT NULL,
+    PRIMARY KEY (session_id, origin, owner_type, owner_id, seq)
 );
 
 CREATE TABLE IF NOT EXISTS dev_event_files (
