@@ -74,6 +74,16 @@ def test_invalid_utf8_degrades_with_a_reported_reason(tmp_path: Path) -> None:
     assert error is not None and "peers.toml" in error
 
 
+def test_empty_registry_is_not_an_error(tmp_path: Path) -> None:
+    """save_registry([]) — the normal state right after removing the last peer —
+    must not be reported as malformed. Only a `peer` key of the wrong TYPE is."""
+    path = tmp_path / "peers.toml"
+    save_registry([], path)
+    peers, error = load_registry_report(path)
+    assert peers == []
+    assert error is None
+
+
 def test_slugify_alias() -> None:
     """Aliases come from wiki_name and must be short, lowercase and path-safe."""
     assert slugify_alias("My Wiki") == "my-wiki"
