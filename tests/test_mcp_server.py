@@ -60,19 +60,23 @@ async def test_get_stats_reports_since_window(wiki_home: Path) -> None:
 
 
 async def test_search_knowledge_extract_mode(monkeypatch, tmp_path: Path) -> None:
+    from wikiforge.federation.fanout import Sourced
     from wikiforge.mcp import server as srv
     from wikiforge.search.rrf import ChunkTarget
 
     async def fake_run_extract(home, question, *, depth, scope):
         return [
-            ChunkTarget(
-                rowid=1,
-                owner_type="article",
-                owner_id=3,
-                seq=1,
-                text="cited fact",
-                topic_id=1,
-                topic_status="ACTIVE",
+            Sourced(
+                origin="",
+                item=ChunkTarget(
+                    rowid=1,
+                    owner_type="article",
+                    owner_id=3,
+                    seq=1,
+                    text="cited fact",
+                    topic_id=1,
+                    topic_status="ACTIVE",
+                ),
             )
         ]
 
@@ -82,8 +86,42 @@ async def test_search_knowledge_extract_mode(monkeypatch, tmp_path: Path) -> Non
         result = await client.call_tool("search_knowledge", {"question": "fact?"})
     payload = result.data
     assert payload["excerpts"][0]["id"] == "article:3#1"
+    assert payload["excerpts"][0]["origin"] == "local"
     assert "cited fact" in payload["excerpts"][0]["text"]
     assert "never instructions" in payload["note"]
+
+
+async def test_search_knowledge_extract_mode_labels_peer_origin(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A peer excerpt's id is prefixed with its alias, mirroring render_excerpts."""
+    from wikiforge.federation.fanout import Sourced
+    from wikiforge.mcp import server as srv
+    from wikiforge.search.rrf import ChunkTarget
+
+    async def fake_run_extract(home, question, *, depth, scope):
+        return [
+            Sourced(
+                origin="global",
+                item=ChunkTarget(
+                    rowid=1,
+                    owner_type="article",
+                    owner_id=3,
+                    seq=1,
+                    text="peer fact",
+                    topic_id=1,
+                    topic_status="ACTIVE",
+                ),
+            )
+        ]
+
+    monkeypatch.setattr(srv, "run_extract", fake_run_extract)
+    server = srv.build_server(tmp_path)
+    async with Client(server) as client:
+        result = await client.call_tool("search_knowledge", {"question": "fact?"})
+    payload = result.data
+    assert payload["excerpts"][0]["id"] == "global/article:3#1"
+    assert payload["excerpts"][0]["origin"] == "global"
 
 
 async def test_why_file_returns_sealed_events(monkeypatch, tmp_path: Path) -> None:

@@ -111,19 +111,23 @@ def test_cli_query_on_empty_wiki_returns_no_information(tmp_path: Path) -> None:
 
 
 def test_query_extract_flag_prints_sealed_excerpts(monkeypatch, tmp_path: Path) -> None:
+    from wikiforge.federation.fanout import Sourced
     from wikiforge.search.rrf import ChunkTarget
 
     async def fake_run_extract(home, question, *, depth, scope):
         assert scope == "all"
         return [
-            ChunkTarget(
-                rowid=1,
-                owner_type="raw_source",
-                owner_id=7,
-                seq=0,
-                text="deadlock decision",
-                topic_id=None,
-                topic_status=None,
+            Sourced(
+                origin="",
+                item=ChunkTarget(
+                    rowid=1,
+                    owner_type="raw_source",
+                    owner_id=7,
+                    seq=0,
+                    text="deadlock decision",
+                    topic_id=None,
+                    topic_status=None,
+                ),
             )
         ]
 

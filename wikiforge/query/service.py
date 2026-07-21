@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from wikiforge.config.settings import Config
 from wikiforge.federation.fanout import Sourced
+from wikiforge.federation.registry import PeerRef
 from wikiforge.llm.provider import LLMProvider
 from wikiforge.llm.safety import seal_source_data as _seal
 from wikiforge.ops.why import safe_event_type
 from wikiforge.search.retriever import HybridRetriever
 from wikiforge.search.rrf import ChunkTarget
+from wikiforge.storage.repository import Repository
 
 NO_RESULTS_ANSWER = "No relevant information found in the wiki."
 
@@ -88,14 +92,51 @@ async def extract_query(
     *,
     depth: str = "standard",
     scope: str = "all",
-) -> list[ChunkTarget]:
+    peers: Sequence[PeerRef] = (),
+    dim: int = 0,
+    cfg: Config | None = None,
+    query_vec: list[float] | None = None,
+    local_model: str = "",
+) -> list[Sourced[ChunkTarget]]:
     """Retrieve top-K chunks for ``query`` with NO LLM call — the caller synthesizes.
 
     This is the token-economy read path: an agent whose context is already paid
     for gets the cited excerpts and writes the answer itself instead of paying a
-    fresh synthesis subprocess.
+    fresh synthesis subprocess. Peer results are labelled and, like recall,
+    only join when the peer shares the local vector space.
     """
-    return await retriever.retrieve(query, depth=depth, owner_types=scope_owner_types(scope))
+    from wikiforge.federation.fanout import Sourced, fan_out, peer_candidates
+
+    owner_types = scope_owner_types(scope)
+    local = await retriever.retrieve(
+        query, depth=depth, owner_types=owner_types, query_vec=query_vec
+    )
+    out = [Sourced(origin="", item=t) for t in local]
+    if not peers or cfg is None or query_vec is None:
+        return out
+
+    async def peer_read(peer_repo: Repository) -> list[ChunkTarget]:
+        rowids = await peer_candidates(
+            peer_repo,
+            query,
+            query_vec=query_vec,
+            owner_types=owner_types,
+            limit=cfg.retrieval.top_k,
+        )
+        return await peer_repo.chunk_targets(rowids)
+
+    out.extend(
+        await fan_out(
+            peers,
+            peer_read,
+            local=None,
+            dim=dim,
+            timeout_ms=cfg.federation.peer_timeout_ms,
+            require_compat=True,
+            local_model=local_model,
+        )
+    )
+    return out
 
 
 def _age_days(ts_str: str | None, now: datetime) -> int | None:
