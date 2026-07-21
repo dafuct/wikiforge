@@ -696,7 +696,12 @@ def changelog(
         None, help="Git range (A..B, A...B, or a single ref). Default: upstream/main..HEAD."
     ),
     home: str | None = HomeOption,
-    limit: int = typer.Option(50, "--limit", help="Max dev events to include."),
+    limit: int = typer.Option(
+        50,
+        "--limit",
+        help="Max dev events per selection arm (file-matched + time-window are "
+        "each capped independently).",
+    ),
     exclude_types: str = typer.Option(
         "", "--exclude-types", help="Comma-separated event types to hide, e.g. chore,docs."
     ),

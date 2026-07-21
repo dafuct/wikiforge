@@ -131,6 +131,11 @@ async def build_file_impact(
     project's files as coupled to this one.
     """
     found = await events_for_paths(repo, [path], root=root, limit=limit)
+    # Unlike `events` above, this queries only the anchored absolute path — it does
+    # not retry with `events_for_paths`' `/`-anchored suffix fallback. On a wiki whose
+    # index predates repo anchoring (or was captured under a different absolute
+    # prefix), `events` can find history via the fallback while `co_changed` stays
+    # empty even though matching co-change data exists.
     co_changed = await repo.co_changed_paths(anchor_paths(root, [path])[0], limit=limit)
     if root:
         prefix = root.rstrip("/") + "/"
@@ -161,7 +166,10 @@ async def build_topic_impact(repo: Repository, topic: Topic, *, limit: int) -> T
     """The forward direction: sources under a topic's current article.
 
     ``shared`` applies the reverse lookup to each source — the signal that one
-    retraction would hit several topics at once.
+    retraction would hit several topics at once. Unlike ``SourceImpact.topics``,
+    ``shared`` is not filtered to current-article citations: it lists every
+    topic that has ever cited the shared source, including via a since-superseded
+    article version.
     """
     assert topic.id is not None
     await repo.ensure_citation_indexes()
