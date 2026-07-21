@@ -2457,10 +2457,10 @@ async def _source(repo: Repository, *, text: str) -> RawSource:
 
 
 async def _article(repo: Repository, *, slug: str, title: str) -> Article:
-    topic = await repo.upsert_topic(Topic(slug=slug, title=title))
-    assert topic.id is not None
+    """upsert_topic returns the topic's id directly (int), not a Topic object."""
+    topic_id = await repo.upsert_topic(Topic(slug=slug, title=title))
     return await repo.insert_next_article_version(
-        Article(topic_id=topic.id, slug=slug, title=title, body_md="b",
+        Article(topic_id=topic_id, slug=slug, title=title, body_md="b",
                 path="p", confidence=0.9, compile_digest="d", version=0)
     )
 
@@ -2830,10 +2830,13 @@ async def _source(repo: Repository, *, content_hash: str, text: str) -> int:
 
 
 async def _article(repo: Repository, *, slug: str) -> tuple[Topic, Article]:
-    topic = await repo.upsert_topic(Topic(slug=slug, title=slug.upper()))
-    assert topic.id is not None
+    """upsert_topic returns only the id (int); fetch the full Topic separately —
+    build_topic_impact needs the real object, not just its id."""
+    topic_id = await repo.upsert_topic(Topic(slug=slug, title=slug.upper()))
+    topic = await repo.get_topic(slug)
+    assert topic is not None
     article = await repo.insert_next_article_version(
-        Article(topic_id=topic.id, slug=slug, title=slug.upper(), body_md="b",
+        Article(topic_id=topic_id, slug=slug, title=slug.upper(), body_md="b",
                 path="p", confidence=0.9, compile_digest="d", version=0)
     )
     return topic, article
@@ -3344,10 +3347,10 @@ async def _seed_drifted(home: Path) -> None:
             )
         )
         for slug in ("a", "b"):
-            topic = await repo.upsert_topic(Topic(slug=slug, title=slug.upper()))
-            assert topic.id is not None
+            # upsert_topic returns the topic's id directly (int), not a Topic object.
+            topic_id = await repo.upsert_topic(Topic(slug=slug, title=slug.upper()))
             article = await repo.insert_next_article_version(
-                Article(topic_id=topic.id, slug=slug, title=slug.upper(), body_md="b",
+                Article(topic_id=topic_id, slug=slug, title=slug.upper(), body_md="b",
                         path="p", confidence=0.9, compile_digest="d", version=0)
             )
             assert article.id is not None
