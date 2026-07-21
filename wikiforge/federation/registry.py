@@ -59,7 +59,7 @@ def load_registry_report(path: Path | None = None) -> tuple[list[PeerRef], str |
         # not a programming error, and must degrade rather than propagate.
         return [], f"{target} is unreadable: {exc}"
 
-    entries = data.get("peer")
+    entries = data.get("peer", [])
     if not isinstance(entries, list):
         return [], f"{target} has no [[peer]] entries"
 
