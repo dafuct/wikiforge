@@ -350,3 +350,63 @@ async def test_capture_event_survives_git_failure(tmp_path: Path) -> None:
         assert src.provenance["branch"] == ""
     finally:
         await db.close()
+
+
+async def test_capture_event_records_repo_root(tmp_path: Path) -> None:
+    """The repo root reaches provenance, so file-less events can be attributed."""
+    from wikiforge.config.settings import load_config, write_default_config
+    from wikiforge.ops.capture import capture_event
+    from wikiforge.storage.db import Database
+    from wikiforge.storage.repository import Repository
+
+    home = tmp_path / "wiki"
+    home.mkdir()
+    (home / "topics").mkdir()
+    write_default_config(home, wiki_name="T")
+    db = await Database.open(home, dim=4)
+    await db.init_schema()
+
+    def runner(argv: list[str]) -> str:
+        if argv == ["git", "rev-parse", "--show-toplevel"]:
+            return "/Users/dev/proj\n"
+        return ""
+
+    try:
+        src = await capture_event(
+            Repository(db), request="do it", files=[], event_type=None,
+            default_type="change", origin="hook", cfg=load_config(home), llm=None,
+            now=_NOW, git_runner=runner,
+        )
+        assert src is not None
+        assert src.provenance["repo"] == "/Users/dev/proj"
+    finally:
+        await db.close()
+
+
+async def test_capture_event_repo_is_empty_outside_a_git_repo(tmp_path: Path) -> None:
+    """A git failure yields "" rather than breaking capture."""
+    from wikiforge.config.settings import load_config, write_default_config
+    from wikiforge.ops.capture import capture_event
+    from wikiforge.storage.db import Database
+    from wikiforge.storage.repository import Repository
+
+    home = tmp_path / "wiki"
+    home.mkdir()
+    (home / "topics").mkdir()
+    write_default_config(home, wiki_name="T")
+    db = await Database.open(home, dim=4)
+    await db.init_schema()
+
+    def boom(argv: list[str]) -> str:
+        raise OSError("no git here")
+
+    try:
+        src = await capture_event(
+            Repository(db), request="do it", files=[], event_type=None,
+            default_type="change", origin="hook", cfg=load_config(home), llm=None,
+            now=_NOW, git_runner=boom,
+        )
+        assert src is not None
+        assert src.provenance["repo"] == ""
+    finally:
+        await db.close()

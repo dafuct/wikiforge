@@ -181,12 +181,19 @@ def git_diff_stat(files: list[str], *, runner: GitRunner, max_lines: int) -> str
 
 
 def git_context(runner: GitRunner) -> dict[str, str]:
-    """Branch, short SHA and worktree flag for the current checkout.
+    """Branch, short SHA, worktree flag and repo root for the current checkout.
 
     Best-effort: any failure yields empty values rather than breaking capture,
     which must survive in a non-git directory. These fields say *where* a
     decision was made — capture still records uncommitted work, so they do not
     tie an event to a commit.
+
+    ``repo`` is the absolute worktree root, i.e. the same prefix the file index
+    stores. It is the only repository signal a *file-less* event has, so
+    derived reports (``wiki changelog``) can attribute a design discussion to
+    the project it happened in. In a worktree it is the worktree's own root,
+    which is the correct answer for "where was this decided"; consumers that
+    need the main repo use :func:`wikiforge.paths.git_main_root`.
     """
     def one(argv: list[str]) -> str:
         try:
@@ -201,6 +208,7 @@ def git_context(runner: GitRunner) -> dict[str, str]:
         "branch": one(["git", "rev-parse", "--abbrev-ref", "HEAD"]),
         "head_sha": one(["git", "rev-parse", "--short", "HEAD"]),
         "worktree": worktree,
+        "repo": one(["git", "rev-parse", "--show-toplevel"]),
     }
 
 
