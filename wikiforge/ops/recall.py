@@ -183,12 +183,12 @@ def cap_and_dedup(
     ordered = sorted(scored, key=lambda pair: pair[0], reverse=True)
     kept: list[Sourced[ChunkTarget]] = []
     for _, sourced in ordered:
+        if len(kept) >= max_excerpts:
+            break
         key = (sourced.origin, sourced.item.owner_type, sourced.item.owner_id, sourced.item.seq)
         if key in seen:
             continue
         kept.append(sourced)
-        if len(kept) >= max_excerpts:
-            break
     return kept
 
 
