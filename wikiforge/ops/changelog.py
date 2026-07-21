@@ -14,7 +14,7 @@ from typing import Literal
 from wikiforge.models.domain import RawSource
 from wikiforge.ops.capture import GitRunner, default_git_runner
 from wikiforge.ops.scope import events_for_paths
-from wikiforge.ops.why import safe_event_type
+from wikiforge.ops.why import event_date, event_summary, safe_event_type
 from wikiforge.storage.repository import Repository
 
 
@@ -182,3 +182,77 @@ async def build_changelog(
         rng=rng, root=root, entries=kept,
         files_with_history=len(found.matched), excluded=excluded,
     )
+
+
+_TYPE_ORDER = (
+    "feature", "bugfix", "refactor", "design", "spec", "research", "docs", "chore", "change",
+)
+_MAX_FILES = 5
+
+
+def _relative(path: str, root: str) -> str:
+    """Show a path relative to the repo when it is inside it, absolute otherwise."""
+    if root:
+        prefix = root.rstrip("/") + "/"
+        if path.startswith(prefix):
+            return path[len(prefix):]
+    return path
+
+
+def _files_line(event: RawSource, root: str) -> str:
+    """Indented, backticked file list capped at five, or "" when there are none."""
+    paths = [p for p in event.provenance.get("files", "").split(",") if p]
+    if not paths:
+        return ""
+    shown = ", ".join(f"`{_relative(p, root)}`" for p in paths[:_MAX_FILES])
+    extra = len(paths) - _MAX_FILES
+    return f"  {shown}" + (f" … (+{extra} more)" if extra > 0 else "")
+
+
+def format_changelog(log: Changelog) -> str:
+    """Render a Changelog as markdown, coverage footer included.
+
+    Human-facing CLI text, so it is unsealed — like ``wiki why``. The sealed
+    paths are ``--prose`` (which feeds a model) and the MCP tool.
+    """
+    lines = [
+        f"# Changelog: {log.rng.base[:7]}..{log.rng.head[:7]} — "
+        f"{log.rng.commits} commits, {len(log.rng.paths)} files"
+    ]
+
+    by_type: dict[str, list[ChangelogEntry]] = {}
+    fileless: list[ChangelogEntry] = []
+    for entry in log.entries:
+        if entry.matched_by == "window":
+            fileless.append(entry)
+            continue
+        kind = safe_event_type(entry.event.provenance.get("type"))
+        by_type.setdefault(kind, []).append(entry)
+
+    ordered = [k for k in _TYPE_ORDER if k in by_type]
+    ordered += sorted(k for k in by_type if k not in _TYPE_ORDER)
+    for kind in ordered:
+        lines += ["", f"## {kind.capitalize()}"]
+        for entry in by_type[kind]:
+            lines.append(f"- **{event_summary(entry.event)}**")
+            files = _files_line(entry.event, log.root)
+            if files:
+                lines.append(files)
+
+    if fileless:
+        lines += ["", "## Decisions without file changes"]
+        for entry in fileless:
+            kind = safe_event_type(entry.event.provenance.get("type"))
+            lines.append(
+                f"- **{event_date(entry.event)} · {kind} · {event_summary(entry.event)}**"
+            )
+
+    by_file = sum(1 for entry in log.entries if entry.matched_by == "files")
+    footer = (
+        f"Coverage: {log.files_with_history} of {len(log.rng.paths)} changed files have "
+        f"recorded decisions; {by_file} events matched by file, "
+        f"{len(log.entries) - by_file} by time window."
+    )
+    if log.excluded:
+        footer += f" {log.excluded} entries hidden by --exclude-types."
+    return "\n".join([*lines, "", "---", footer])
