@@ -191,3 +191,153 @@ async def test_fts_search_raw_source_scope(db_repo) -> None:
     hits_raw = await repo.fts_search('"zebra"', ["raw_source"], 10)
     hits_articles = await repo.fts_search('"zebra"', ["article"], 10)
     assert hits_raw and not hits_articles
+
+
+async def _dev_event_with_files(
+    repo: Repository, *, title: str, files: list[str], fetched_at: str
+) -> int:
+    """Insert one DEV_EVENT raw source plus its file-index rows; return its id."""
+    source_id, _ = await repo.ingest_raw_source(
+        RawSource(
+            content_hash=title,
+            canonical_url=None,
+            source_type=SourceType.DEV_EVENT,
+            title=title,
+            text=title,
+            fetched_at=datetime.fromisoformat(fetched_at),
+            provenance={"files": ",".join(files), "type": "change"},
+        )
+    )
+    if files:
+        await repo.add_dev_event_files(source_id, files)
+    return source_id
+
+
+async def test_dev_events_for_paths_matches_any_of_the_given_paths(db_repo) -> None:
+    db, repo = db_repo
+    await repo.ensure_dev_event_files()
+    a = await _dev_event_with_files(
+        repo, title="a", files=["/r/x.py"], fetched_at="2026-07-01T00:00:00+00:00"
+    )
+    b = await _dev_event_with_files(
+        repo, title="b", files=["/r/y.py"], fetched_at="2026-07-02T00:00:00+00:00"
+    )
+    await _dev_event_with_files(
+        repo, title="c", files=["/r/z.py"], fetched_at="2026-07-03T00:00:00+00:00"
+    )
+
+    found = await repo.dev_events_for_paths(["/r/x.py", "/r/y.py"], limit=10)
+
+    assert {e.id for e in found} == {a, b}
+
+
+async def test_dev_events_for_paths_yields_one_row_per_event(db_repo) -> None:
+    """An event touching several queried paths must not be returned twice."""
+    db, repo = db_repo
+    await repo.ensure_dev_event_files()
+    only = await _dev_event_with_files(
+        repo, title="multi", files=["/r/x.py", "/r/y.py"],
+        fetched_at="2026-07-01T00:00:00+00:00",
+    )
+
+    found = await repo.dev_events_for_paths(["/r/x.py", "/r/y.py"], limit=10)
+
+    assert [e.id for e in found] == [only]
+
+
+async def test_dev_events_for_paths_survives_more_than_999_paths(db_repo) -> None:
+    """The JSON-array expansion exists so a big branch can't hit SQLite's parameter cap."""
+    db, repo = db_repo
+    await repo.ensure_dev_event_files()
+    wanted = await _dev_event_with_files(
+        repo, title="hit", files=["/r/needle.py"], fetched_at="2026-07-01T00:00:00+00:00"
+    )
+    paths = [f"/r/miss{i}.py" for i in range(1500)] + ["/r/needle.py"]
+
+    found = await repo.dev_events_for_paths(paths, limit=10)
+
+    assert [e.id for e in found] == [wanted]
+
+
+async def test_dev_events_for_paths_limit_counts_events_not_rows(db_repo) -> None:
+    db, repo = db_repo
+    await repo.ensure_dev_event_files()
+    await _dev_event_with_files(
+        repo, title="a", files=["/r/x.py", "/r/y.py"], fetched_at="2026-07-01T00:00:00+00:00"
+    )
+    await _dev_event_with_files(
+        repo, title="b", files=["/r/x.py", "/r/y.py"], fetched_at="2026-07-02T00:00:00+00:00"
+    )
+
+    found = await repo.dev_events_for_paths(["/r/x.py", "/r/y.py"], limit=2)
+
+    assert len(found) == 2
+
+
+async def test_matched_dev_event_paths_is_exact_and_limit_free(db_repo) -> None:
+    """Coverage is computed independently of the event limit, so it can't under-report."""
+    db, repo = db_repo
+    await repo.ensure_dev_event_files()
+    await _dev_event_with_files(
+        repo, title="a", files=["/r/x.py"], fetched_at="2026-07-01T00:00:00+00:00"
+    )
+    await _dev_event_with_files(
+        repo, title="b", files=["/r/y.py"], fetched_at="2026-07-02T00:00:00+00:00"
+    )
+
+    matched = await repo.matched_dev_event_paths(["/r/x.py", "/r/y.py", "/r/never.py"])
+
+    assert matched == {"/r/x.py", "/r/y.py"}
+
+
+async def test_dev_events_fileless_in_window_selects_only_events_with_no_files(
+    db_repo,
+) -> None:
+    db, repo = db_repo
+    await repo.ensure_dev_event_files()
+    bare = await _dev_event_with_files(
+        repo, title="bare", files=[], fetched_at="2026-07-02T12:00:00+00:00"
+    )
+    await _dev_event_with_files(
+        repo, title="withfile", files=["/r/x.py"], fetched_at="2026-07-02T13:00:00+00:00"
+    )
+    await _dev_event_with_files(
+        repo, title="early", files=[], fetched_at="2026-06-01T00:00:00+00:00"
+    )
+
+    found = await repo.dev_events_fileless_in_window(
+        "2026-07-02T00:00:00.000000+00:00", "2026-07-02T23:59:59.999999+00:00", limit=10
+    )
+
+    assert [e.id for e in found] == [bare]
+
+
+async def test_co_changed_paths_ranks_by_shared_events(db_repo) -> None:
+    db, repo = db_repo
+    await repo.ensure_dev_event_files()
+    await _dev_event_with_files(
+        repo, title="1", files=["/r/x.py", "/r/near.py"], fetched_at="2026-07-01T00:00:00+00:00"
+    )
+    await _dev_event_with_files(
+        repo, title="2", files=["/r/x.py", "/r/near.py"], fetched_at="2026-07-02T00:00:00+00:00"
+    )
+    await _dev_event_with_files(
+        repo, title="3", files=["/r/x.py", "/r/far.py"], fetched_at="2026-07-03T00:00:00+00:00"
+    )
+
+    co = await repo.co_changed_paths("/r/x.py", limit=10)
+
+    assert co == [("/r/near.py", 2), ("/r/far.py", 1)]
+
+
+async def test_co_changed_paths_accepts_a_relative_suffix(db_repo) -> None:
+    """A caller outside a git repo has no absolute form to anchor with."""
+    db, repo = db_repo
+    await repo.ensure_dev_event_files()
+    await _dev_event_with_files(
+        repo, title="1", files=["/r/x.py", "/r/near.py"], fetched_at="2026-07-01T00:00:00+00:00"
+    )
+
+    co = await repo.co_changed_paths("x.py", limit=10)
+
+    assert co == [("/r/near.py", 1)]

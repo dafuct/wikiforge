@@ -7,6 +7,7 @@ records and query parameters, and enforces raw-source dedup by content hash.
 from __future__ import annotations
 
 import json
+import sqlite3
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -91,6 +92,26 @@ def _like_escape(value: str) -> str:
     backslash escape must be escaped first so it can't double-escape.
     """
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _raw_source_from_row(row: sqlite3.Row) -> RawSource:
+    """Build a RawSource from a row selecting the full raw_sources column list.
+
+    Five methods built this inline before; four more were about to. One
+    constructor keeps the mapping from drifting between them.
+    """
+    return RawSource(
+        id=row["id"],
+        content_hash=row["content_hash"],
+        canonical_url=row["canonical_url"],
+        source_type=SourceType(row["source_type"]),
+        title=row["title"],
+        text=row["text"],
+        fetched_at=row["fetched_at"],
+        first_seen_session_id=row["first_seen_session_id"],
+        persona=row["persona"],
+        provenance=json.loads(row["provenance"]),
+    )
 
 
 class Repository:
@@ -386,23 +407,10 @@ class Repository:
 
     async def dev_events_pending_digest(self, *, limit: int) -> list[RawSource]:
         """Return dev-event raw sources whose provenance marks the digest as pending."""
-        out: list[RawSource] = []
-        async for row in self._q.dev_events_pending_digest(self._db.conn, limit=limit):
-            out.append(
-                RawSource(
-                    id=row["id"],
-                    content_hash=row["content_hash"],
-                    canonical_url=row["canonical_url"],
-                    source_type=SourceType(row["source_type"]),
-                    title=row["title"],
-                    text=row["text"],
-                    fetched_at=row["fetched_at"],
-                    first_seen_session_id=row["first_seen_session_id"],
-                    persona=row["persona"],
-                    provenance=json.loads(row["provenance"]),
-                )
-            )
-        return out
+        return [
+            _raw_source_from_row(row)
+            async for row in self._q.dev_events_pending_digest(self._db.conn, limit=limit)
+        ]
 
     async def count_dev_events_pending_digest(self) -> int:
         """Return the true count of dev-event raw sources with a pending digest."""
@@ -411,25 +419,12 @@ class Repository:
 
     async def dev_events_unconsolidated(self, cutoff_iso: str, *, limit: int) -> list[RawSource]:
         """Return dev-event raw sources older than ``cutoff_iso`` and not yet consolidated."""
-        out: list[RawSource] = []
-        async for row in self._q.dev_events_unconsolidated(
-            self._db.conn, cutoff=cutoff_iso, limit=limit
-        ):
-            out.append(
-                RawSource(
-                    id=row["id"],
-                    content_hash=row["content_hash"],
-                    canonical_url=row["canonical_url"],
-                    source_type=SourceType(row["source_type"]),
-                    title=row["title"],
-                    text=row["text"],
-                    fetched_at=row["fetched_at"],
-                    first_seen_session_id=row["first_seen_session_id"],
-                    persona=row["persona"],
-                    provenance=json.loads(row["provenance"]),
-                )
+        return [
+            _raw_source_from_row(row)
+            async for row in self._q.dev_events_unconsolidated(
+                self._db.conn, cutoff=cutoff_iso, limit=limit
             )
-        return out
+        ]
 
     async def set_raw_source_provenance(
         self, content_hash: str, provenance: dict[str, str]
@@ -1004,25 +999,66 @@ class Repository:
         broaden the match — ``test_capture.py`` never matches
         ``testXcapture.py``.
         """
-        out: list[RawSource] = []
-        async for row in self._q.dev_events_for_path(
-            self._db.conn, path=path, path_pattern=_like_escape(path), limit=limit
-        ):
-            out.append(
-                RawSource(
-                    id=row["id"],
-                    content_hash=row["content_hash"],
-                    canonical_url=row["canonical_url"],
-                    source_type=SourceType(row["source_type"]),
-                    title=row["title"],
-                    text=row["text"],
-                    fetched_at=row["fetched_at"],
-                    first_seen_session_id=row["first_seen_session_id"],
-                    persona=row["persona"],
-                    provenance=json.loads(row["provenance"]),
-                )
+        return [
+            _raw_source_from_row(row)
+            async for row in self._q.dev_events_for_path(
+                self._db.conn, path=path, path_pattern=_like_escape(path), limit=limit
             )
-        return out
+        ]
+
+    async def dev_events_for_paths(self, paths: list[str], *, limit: int) -> list[RawSource]:
+        """Dev events touching any of ``paths`` (absolute), newest first.
+
+        One row per event: ``limit`` bounds events, not event×path pairs.
+        Coverage is a separate question — see :meth:`matched_dev_event_paths`.
+        """
+        if not paths:
+            return []
+        return [
+            _raw_source_from_row(row)
+            async for row in self._q.dev_events_for_paths(
+                self._db.conn, paths_json=json.dumps(paths), limit=limit
+            )
+        ]
+
+    async def matched_dev_event_paths(self, paths: list[str]) -> set[str]:
+        """Which of ``paths`` carry any recorded dev-event history (no limit)."""
+        if not paths:
+            return set()
+        return {
+            row["path"]
+            async for row in self._q.matched_dev_event_paths(
+                self._db.conn, paths_json=json.dumps(paths)
+            )
+        }
+
+    async def dev_events_fileless_in_window(
+        self, start_iso: str, end_iso: str, *, limit: int
+    ) -> list[RawSource]:
+        """Dev events with no indexed file, captured within [start_iso, end_iso].
+
+        Both bounds must already be UTC-normalized to ``fetched_at``'s stored
+        format (see wikiforge.ops.changelog._bound) — comparison is lexical.
+        """
+        return [
+            _raw_source_from_row(row)
+            async for row in self._q.dev_events_fileless_in_window(
+                self._db.conn, start=start_iso, end=end_iso, limit=limit
+            )
+        ]
+
+    async def co_changed_paths(self, path: str, *, limit: int) -> list[tuple[str, int]]:
+        """Files that historically changed in the same dev events as ``path``.
+
+        Ranked by shared-event count, ties broken by path. Correlation, not
+        causation — the caller's render must say so.
+        """
+        return [
+            (row["path"], int(row["shared"]))
+            async for row in self._q.co_changed_paths(
+                self._db.conn, path=path, path_pattern=_like_escape(path), limit=limit
+            )
+        ]
 
     async def ensure_why_log(self) -> None:
         """Create the guardrail dedup table if missing (pre-upgrade wikis lack it)."""
