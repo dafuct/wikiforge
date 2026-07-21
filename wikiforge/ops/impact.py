@@ -15,6 +15,7 @@ from typing import Literal
 from wikiforge.lint.auditor import quote_drifted
 from wikiforge.models.domain import RawSource, Topic
 from wikiforge.ops.scope import anchor_paths, events_for_paths
+from wikiforge.ops.why import event_date, event_summary, safe_event_type
 from wikiforge.storage.repository import CitationSource, Repository
 
 TargetKind = Literal["source", "file", "topic"]
@@ -194,3 +195,71 @@ async def build_topic_impact(repo: Repository, topic: Topic, *, limit: int) -> T
 
     refs.sort(key=lambda ref: (-ref.claim_count, ref.source.id or 0))
     return TopicImpact(slug=topic.slug, title=topic.title, sources=refs[:limit], shared=shared)
+
+
+def format_impact(report: SourceImpact | FileImpact | TopicImpact) -> str:
+    """Human-facing render for any of the three report kinds (unsealed CLI text)."""
+    if isinstance(report, SourceImpact):
+        return _format_source(report)
+    if isinstance(report, FileImpact):
+        return _format_file(report)
+    return _format_topic(report)
+
+
+def _empty(what: str) -> str:
+    return f"{what}\n  nothing recorded rests on this."
+
+
+def _format_source(report: SourceImpact) -> str:
+    title = report.source.canonical_url or report.source.title
+    head = f"Impact of source: {title}"
+    live = [c for c in report.claims if c.is_current]
+    if not report.claims and not report.findings:
+        return _empty(head)
+    lines = [
+        f"{head}\n  {len(live)} live claim(s) in {len(report.topics)} topic(s) rest on this."
+    ]
+    for claim in live:
+        flag = "  [quote drifted]" if claim.drifted else ""
+        lines.append(f"  · {claim.topic_slug}: {claim.claim}{flag}")
+    historical = [c for c in report.claims if not c.is_current]
+    if historical:
+        lines.append("  historical (superseded article versions):")
+        lines += [f"    · {c.topic_slug}: {c.claim}" for c in historical]
+    if report.findings:
+        lines.append("  research findings citing this source:")
+        lines += [f"    · {persona}: {summary}" for persona, summary in report.findings]
+    return "\n".join(lines)
+
+
+def _format_file(report: FileImpact) -> str:
+    head = f"Impact of file: {report.path}"
+    if not report.events and not report.co_changed:
+        return _empty(head)
+    lines = [f"{head}\n  {len(report.events)} recorded decision(s) touched this file."]
+    for event in report.events:
+        kind = safe_event_type(event.provenance.get("type"))
+        lines.append(f"  · {event_date(event)} · {kind} · {event_summary(event)}")
+    if report.co_changed:
+        lines.append("  changed together with (historically, not causally):")
+        for path, shared in report.co_changed:
+            rel = path[len(report.root.rstrip('/')) + 1:] if report.root and path.startswith(
+                report.root.rstrip("/") + "/"
+            ) else path
+            lines.append(f"    · {rel} ({shared}x)")
+    return "\n".join(lines)
+
+
+def _format_topic(report: TopicImpact) -> str:
+    head = f"Impact of topic: {report.slug} — {report.title}"
+    if not report.sources:
+        return _empty(head)
+    lines = [f"{head}\n  rests on {len(report.sources)} source(s)."]
+    for ref in report.sources:
+        name = ref.source.canonical_url or ref.source.title
+        drift = f", {ref.drifted_count} drifted" if ref.drifted_count else ""
+        lines.append(f"  · {name} ({ref.claim_count} claim(s){drift})")
+        others = report.shared.get(ref.source.id or -1)
+        if others:
+            lines.append(f"    also carries: {', '.join(others)}")
+    return "\n".join(lines)

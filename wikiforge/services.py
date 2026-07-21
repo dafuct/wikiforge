@@ -1180,3 +1180,56 @@ async def run_changelog(
             return rendered
     finally:
         await db.close()
+
+
+async def run_impact(
+    home: Path, target: str, *, limit: int = 20, as_kind: str | None = None
+) -> str:
+    """Render the blast radius of a source, a file, or a topic.
+
+    Read-only and zero-LLM. ``as_kind`` forces the interpretation when the
+    automatic classification would guess wrong (a topic slug that looks like a
+    filename, say).
+    """
+    from wikiforge.ops import impact as impact_ops
+
+    kind = impact_ops.classify_target(target, forced=as_kind)  # type: ignore[arg-type]
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        if kind == "source":
+            source = await _resolve_source(repo, target)
+            if source is None:
+                raise ValueError(
+                    f"no source matches {target!r} (tried url/hash/id) — "
+                    "use --as file or --as topic to force another reading"
+                )
+            return impact_ops.format_impact(
+                await impact_ops.build_source_impact(repo, source, limit=limit)
+            )
+        if kind == "file":
+            return impact_ops.format_impact(
+                await impact_ops.build_file_impact(repo, target, root=repo_root(), limit=limit)
+            )
+        topic = await repo.get_topic(target)
+        if topic is None:
+            raise ValueError(
+                f"no topic matches {target!r} — "
+                "use --as file or --as source to force another reading"
+            )
+        return impact_ops.format_impact(
+            await impact_ops.build_topic_impact(repo, topic, limit=limit)
+        )
+    finally:
+        await db.close()
+
+
+async def _resolve_source(repo: Repository, target: str) -> RawSource | None:
+    """Resolve a source target by URL, content hash, or numeric id."""
+    if target.startswith(("http://", "https://")):
+        return await repo.get_raw_source_by_url(target)
+    digits = target.removeprefix("#")
+    if digits.isdigit():
+        return await repo.get_raw_source_by_id(int(digits))
+    return await repo.get_raw_source_by_hash(target)
