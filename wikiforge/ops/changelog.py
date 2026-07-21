@@ -9,8 +9,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 
+from wikiforge.models.domain import RawSource
 from wikiforge.ops.capture import GitRunner, default_git_runner
+from wikiforge.ops.scope import events_for_paths
+from wikiforge.ops.why import safe_event_type
+from wikiforge.storage.repository import Repository
 
 
 @dataclass(frozen=True)
@@ -104,3 +109,76 @@ def _infer_base_ref(git: Callable[..., str]) -> str | None:
             continue
         return candidate
     return None
+
+
+@dataclass(frozen=True)
+class ChangelogEntry:
+    """One dev event in the range, plus which arm of the selection found it."""
+
+    event: RawSource
+    matched_by: Literal["files", "window"]
+
+
+@dataclass(frozen=True)
+class Changelog:
+    """Everything the render needs, including the numbers behind the coverage line."""
+
+    rng: Range
+    root: str
+    entries: list[ChangelogEntry]
+    files_with_history: int
+    excluded: int
+
+
+async def build_changelog(
+    repo: Repository,
+    rng: Range,
+    *,
+    root: str,
+    limit: int,
+    exclude_types: frozenset[str],
+) -> Changelog:
+    """Select the dev events belonging to ``rng``, newest first.
+
+    Two arms, unioned and deduped by event id:
+
+    * **files** — the range's changed paths, anchored to ``root``, looked up in
+      the file index. This works retroactively: only 1 of 43 events on the
+      author's wiki carries a head_sha, so joining on commits is not an option.
+    * **window** — events with no files at all, captured between the two
+      commits' timestamps. These are the design discussions the PreCompact hook
+      exists to save, and the file arm cannot see them by construction.
+
+    A file-less event is kept when its ``repo`` provenance matches ``root`` or
+    is absent. Absent means *unknown*, not *mismatched*: every event captured
+    before that key existed has none, and excluding them would make the window
+    arm return nothing on any existing wiki. The imprecision is bounded to
+    file-less events and self-heals as new events carry the key.
+    """
+    found = await events_for_paths(repo, rng.paths, root=root, limit=limit)
+    entries = [ChangelogEntry(event=event, matched_by="files") for event in found.events]
+    seen = {event.id for event in found.events}
+
+    for event in await repo.dev_events_fileless_in_window(
+        rng.base_iso, rng.head_iso, limit=limit
+    ):
+        if event.id in seen:
+            continue
+        if event.provenance.get("repo", "") not in ("", root):
+            continue
+        seen.add(event.id)
+        entries.append(ChangelogEntry(event=event, matched_by="window"))
+
+    kept: list[ChangelogEntry] = []
+    excluded = 0
+    for entry in entries:
+        if safe_event_type(entry.event.provenance.get("type")) in exclude_types:
+            excluded += 1
+            continue
+        kept.append(entry)
+    kept.sort(key=lambda entry: entry.event.fetched_at, reverse=True)
+
+    return Changelog(
+        rng=rng, root=root, entries=kept,
+        files_with_history=len(found.matched), excluded=excluded,
+    )
