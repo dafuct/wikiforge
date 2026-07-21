@@ -11,13 +11,16 @@ of its writes, which no Python-side wrapper could intercept.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn, Self
+from typing import Any, Literal, NoReturn, Self
 
 import aiosqlite
 import sqlite_vec
 
+from wikiforge.federation.registry import PeerRef
 from wikiforge.storage.db import DB_FILENAME
+from wikiforge.storage.repository import Repository
 
 
 class PeerUnavailable(Exception):
@@ -110,3 +113,91 @@ class ReadOnlyDatabase:
     async def close(self) -> None:
         """Close the underlying connection."""
         await self._conn.close()
+
+
+PeerCompat = Literal["ok", "mismatch", "unknown"]
+
+
+@dataclass(frozen=True)
+class PeerStatus:
+    """What one peer can currently contribute, and why."""
+
+    peer: PeerRef
+    reachable: bool
+    model: str | None
+    compat: PeerCompat
+    has_file_index: bool
+    error: str | None = None
+
+
+def compat_verdict(peer_model: str | None, local_model: str) -> PeerCompat:
+    """Whether a peer's stored vectors share the local vector space.
+
+    ``unknown`` is deliberately not optimistic: an unstamped wiki may well use
+    the same model, but "may well" is no basis for feeding numbers into a
+    similarity gate calibrated at 0.80. The verdict is never taken from the
+    peer's ``config.toml`` — config says what the model *would be* on the next
+    run, while only the stamp is evidence about the vectors already stored.
+    """
+    if peer_model is None:
+        return "unknown"
+    return "ok" if peer_model == local_model else "mismatch"
+
+
+async def peer_status(peer: PeerRef, *, local_model: str, dim: int) -> PeerStatus:
+    """Probe one peer. Never raises: an unreachable peer is a reported state."""
+    try:
+        db = await ReadOnlyDatabase.open(peer.home, dim=dim)
+    except PeerUnavailable as exc:
+        return PeerStatus(
+            peer=peer,
+            reachable=False,
+            model=None,
+            compat="unknown",
+            has_file_index=False,
+            error=str(exc),
+        )
+    try:
+        repo = Repository(db)  # type: ignore[arg-type]
+        model = await repo.get_meta("embedding_model")
+        row = await db.fetchone(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='dev_event_files'"
+        )
+        return PeerStatus(
+            peer=peer,
+            reachable=True,
+            model=model,
+            compat=compat_verdict(model, local_model),
+            has_file_index=row is not None,
+        )
+    except Exception as exc:  # noqa: BLE001 -- a broken peer is a status, not a crash
+        return PeerStatus(
+            peer=peer,
+            reachable=False,
+            model=None,
+            compat="unknown",
+            has_file_index=False,
+            error=str(exc),
+        )
+    finally:
+        await db.close()
+
+
+def fix_hint(status: PeerStatus) -> str | None:
+    """The one-line command that would make this peer contribute more.
+
+    Both hints name a command the *user* runs, in that project — repairing a
+    peer from here would be a cross-wiki write, which the design forbids. The
+    file-index check runs before the compat check: an unstamped
+    ``embedding_model`` is the common case on this machine (every project
+    wiki, today), so ranking compat first would bury the rarer, differently-
+    fixed "no file index" finding behind a near-universal one and a user
+    would never see it without fixing compat first and re-running.
+    """
+    if not status.reachable:
+        return f"unreachable: {status.error or 'unknown reason'}"
+    if not status.has_file_index:
+        return f"no file index — run: wiki maintain --home {status.peer.home}"
+    if status.compat != "ok":
+        return f"vector paths skipped — run: wiki reindex --embeddings --home {status.peer.home}"
+    return None
