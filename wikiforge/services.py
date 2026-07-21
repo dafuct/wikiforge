@@ -1037,12 +1037,15 @@ async def run_why(
     db = await Database.open(home, dim=dim)
     try:
         local_repo = Repository(db)
-        local_events = await read(local_repo, read_only=False)
         fell_back = False
-        if not path.startswith("/"):
-            fell_back = (
-                await events_for_paths(local_repo, [path], root=root, limit=limit)
-            ).fell_back
+        if path.startswith("/"):
+            local_events = await events_for_absolute(local_repo, path, limit=limit, read_only=False)
+        else:
+            found = await events_for_paths(
+                local_repo, [path], root=root, limit=limit, read_only=False
+            )
+            local_events = found.events
+            fell_back = found.fell_back
         merged = [Sourced(origin="", item=e) for e in local_events]
         merged.extend(
             await fan_out(
