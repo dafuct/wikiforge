@@ -13,8 +13,9 @@ from pathlib import Path
 from typing import Literal
 
 from wikiforge.lint.auditor import quote_drifted
-from wikiforge.models.domain import RawSource
-from wikiforge.storage.repository import Repository
+from wikiforge.models.domain import RawSource, Topic
+from wikiforge.ops.scope import anchor_paths, events_for_paths
+from wikiforge.storage.repository import CitationSource, Repository
 
 TargetKind = Literal["source", "file", "topic"]
 
@@ -106,3 +107,90 @@ async def build_source_impact(
         findings=await repo.findings_for_source(source.id, limit=limit),
         topics=sorted({c.topic_slug for c in claims if c.is_current}),
     )
+
+
+@dataclass(frozen=True)
+class FileImpact:
+    """What rests on one file, and what has historically moved with it."""
+
+    path: str
+    root: str
+    events: list[RawSource]
+    co_changed: list[tuple[str, int]]
+
+
+async def build_file_impact(
+    repo: Repository, path: str, *, root: str, limit: int
+) -> FileImpact:
+    """Decisions touching ``path``, plus files that changed alongside it.
+
+    Co-change is correlation, not causation: these files have historically been
+    edited in the same turns, which is a hint about coupling, not a rule. The
+    list is filtered to ``root`` so a multi-project wiki cannot report another
+    project's files as coupled to this one.
+    """
+    found = await events_for_paths(repo, [path], root=root, limit=limit)
+    co_changed = await repo.co_changed_paths(anchor_paths(root, [path])[0], limit=limit)
+    if root:
+        prefix = root.rstrip("/") + "/"
+        co_changed = [(p, n) for p, n in co_changed if p.startswith(prefix)]
+    return FileImpact(path=path, root=root, events=found.events, co_changed=co_changed)
+
+
+@dataclass(frozen=True)
+class SourceRef:
+    """One source a topic rests on, with how heavily and how reliably."""
+
+    source: RawSource
+    claim_count: int
+    drifted_count: int
+
+
+@dataclass(frozen=True)
+class TopicImpact:
+    """What one topic rests on, and which other topics share those foundations."""
+
+    slug: str
+    title: str
+    sources: list[SourceRef]
+    shared: dict[int, list[str]]
+
+
+async def build_topic_impact(repo: Repository, topic: Topic, *, limit: int) -> TopicImpact:
+    """The forward direction: sources under a topic's current article.
+
+    ``shared`` applies the reverse lookup to each source — the signal that one
+    retraction would hit several topics at once.
+    """
+    assert topic.id is not None
+    await repo.ensure_citation_indexes()
+
+    grouped: dict[int, list[CitationSource]] = {}
+    for row in await repo.citations_with_source_for_topic(topic.id):
+        grouped.setdefault(row.raw_source_id, []).append(row)
+
+    refs: list[SourceRef] = []
+    shared: dict[int, list[str]] = {}
+    for source_id, rows in grouped.items():
+        source = await repo.get_raw_source_by_id(source_id)
+        if source is None:
+            continue
+        refs.append(
+            SourceRef(
+                source=source,
+                claim_count=len(rows),
+                drifted_count=sum(1 for r in rows if quote_drifted(r.quote, r.source_text)),
+            )
+        )
+        others = sorted(
+            {
+                claim.topic_slug
+                for claim in await repo.citations_for_source(source_id, limit=limit)
+                if claim.topic_slug != topic.slug
+            }
+        )
+        if others:
+            shared[source_id] = others
+
+    refs.sort(key=lambda ref: (-ref.claim_count, ref.source.id or 0))
+    return TopicImpact(slug=topic.slug, title=topic.title, sources=refs[:limit], shared=shared)
