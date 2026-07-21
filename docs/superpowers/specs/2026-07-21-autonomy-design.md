@@ -125,7 +125,7 @@ async def open_peer(home: Path) -> ReadOnlyDatabase   # raises PeerUnavailable
 
 ### 5.3 Candidate generation on a peer (probe-gated)
 
-Peer candidates come from `fts_search` (plain SQLite FTS5, read-only safe) and `vec_search` (sqlite-vec `vec0` KNN). Whether a `vec0` KNN query runs over a `mode=ro` connection is **not assumed** — the plan's first task probes it against a real read-only copy.
+Peer candidates come from `fts_search` (plain SQLite FTS5, read-only safe) and `vec_search` (sqlite-vec `vec0` KNN). **Probe result (2026-07-21):** a `vec0` KNN query *does* run over a `mode=ro` connection with the installed sqlite-vec, pinned by `tests/test_federation_probe.py`. Peers therefore contribute FTS + vector candidates. The `sqlite3.OperationalError` fallback below stays in the code regardless — a future sqlite-vec could change this, and the fallback is what makes that a breadth reduction rather than an outage.
 
 - Probe passes → peers contribute FTS + vector candidates, as locally.
 - Probe fails → peers contribute FTS candidates only, and the documented limitation is reduced *breadth*, not wrong numbers: admission is decided by cosine against stored vectors either way (§6.2), so nothing bogus can enter on the fallback path.
