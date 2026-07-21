@@ -647,12 +647,17 @@ def why(
     except Exception:
         pass
 
-    events = asyncio.run(run_why(resolve_capture_home(home), clean_path, limit=limit))
+    events, fell_back = asyncio.run(run_why(resolve_capture_home(home), clean_path, limit=limit))
     if note:
         typer.echo(note)
     if not events:
         typer.echo(f"No recorded decisions touch {clean_path}.")
         return
+    if fell_back:
+        typer.echo(
+            "note: no decisions recorded under this repository; "
+            "showing matches from other projects."
+        )
     typer.echo(format_events(clean_path, events))
 
 

@@ -107,7 +107,7 @@ async def test_why_file_returns_sealed_events(monkeypatch, tmp_path: Path) -> No
                 fetched_at=datetime(2026, 7, 1, tzinfo=UTC),
                 provenance={},
             ),
-        ]
+        ], False
 
     monkeypatch.setattr(srv, "run_why", fake_run_why)
     server = srv.build_server(tmp_path)
@@ -133,7 +133,7 @@ async def test_why_file_clamps_agent_controlled_limit(monkeypatch, tmp_path: Pat
 
     async def fake_run_why(home, path, *, limit):
         captured["limit"] = limit
-        return []
+        return [], False
 
     monkeypatch.setattr(srv, "run_why", fake_run_why)
     server = srv.build_server(tmp_path)

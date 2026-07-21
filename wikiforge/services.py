@@ -38,6 +38,7 @@ from wikiforge.models.domain import (
 )
 from wikiforge.models.enums import ExportTarget, OutputKind, QueryDepth
 from wikiforge.ops.flush import FlushStats
+from wikiforge.ops.scope import events_for_paths, repo_root
 from wikiforge.output.exporter import Exporter
 from wikiforge.output.generator import OutputGenerator
 from wikiforge.query.service import QueryResult
@@ -980,23 +981,33 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     return excerpts or hint
 
 
-async def run_why(home: Path, path: str, *, limit: int = 5) -> list[RawSource]:
-    """Return the dev events that touched ``path``, newest first (zero LLM).
+async def run_why(home: Path, path: str, *, limit: int = 5) -> tuple[list[RawSource], bool]:
+    """Decision history for ``path``, newest first, scoped to the current repo.
+
+    Returns ``(events, fell_back)``. A relative path is anchored to the
+    enclosing git worktree so a wiki shared by several projects cannot answer
+    with another project's decisions; ``fell_back`` is True when that repo had
+    no history and the ``/``-anchored suffix match answered instead, which the
+    caller must label rather than pass off as local history. An absolute path
+    is looked up as given — the PreToolUse guardrail always supplies one.
 
     Never constructs an embedding or LLM provider — the lookup is pure SQL over
     the ``dev_event_files`` index (ensured + backfilled on first use). A home
-    with no config or no database returns ``[]``.
+    with no config or no database returns ``([], False)``.
     """
     from wikiforge.storage.db import DB_FILENAME
 
     if not (home / CONFIG_FILENAME).exists() or not (home / DB_FILENAME).exists():
-        return []
+        return [], False
     cfg = load_config(home)
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:
         repo = Repository(db)
         await repo.ensure_dev_event_files()
-        return await repo.dev_events_for_path(path, limit=limit)
+        if path.startswith("/"):
+            return await repo.dev_events_for_path(path, limit=limit), False
+        found = await events_for_paths(repo, [path], root=repo_root(), limit=limit)
+        return found.events, found.fell_back
     finally:
         await db.close()
 
