@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from wikiforge.federation.fanout import Sourced
 from wikiforge.models.domain import RawSource
 
 _LINE_SUFFIX = re.compile(r"^(?P<path>.+):(?P<line>\d+)$")
@@ -75,16 +76,36 @@ def event_date(event: RawSource) -> str:
     return ts[:10]
 
 
-def format_events(path: str, events: list[RawSource]) -> str:
-    """Human-facing ``wiki why`` output (newest first; unsealed — not model-bound)."""
+def event_ts(event: RawSource) -> str:
+    """A full sortable timestamp for an event: provenance ts, else fetched_at.
+
+    ``event_date`` truncates to a day, which is enough to *print* but not to
+    *order* — merging several wikis needs a total order finer than a date, and
+    a row id is meaningless across databases (a peer's id says nothing about
+    when its event happened relative to a local one).
+    """
+    ts = event.provenance.get("ts")
+    return str(ts) if ts else event.fetched_at.isoformat()
+
+
+def format_events(path: str, events: list[Sourced[RawSource]]) -> str:
+    """Human-facing ``wiki why`` output (newest first; unsealed — not model-bound).
+
+    A peer's line carries ``[alias]``: a cross-project answer is labelled, never
+    presented as local history (the rule cycle 3 set for the suffix fallback).
+    """
     lines = [f"Decision history for {path}:"]
-    for event in events:
+    for sourced in events:
+        event = sourced.item
         marker = event.provenance.get("consolidated")
         suffix = f"  [consolidated: {marker}]" if marker else ""
         branch = event.provenance.get("branch")
         where = f" ({branch})" if branch else ""
         kind = safe_event_type(event.provenance.get("type"))
-        lines.append(f"  {event_date(event)} · {kind}{where} · {event_summary(event)}{suffix}")
+        origin = f"  [{sourced.origin}]" if sourced.origin else ""
+        lines.append(
+            f"  {event_date(event)} · {kind}{where} · {event_summary(event)}{suffix}{origin}"
+        )
     return "\n".join(lines)
 
 
@@ -111,22 +132,25 @@ def parse_pretool_stdin(raw: str) -> tuple[str | None, str | None]:
     )
 
 
-def render_warning(events: list[RawSource], *, max_events: int) -> str:
+def render_warning(events: list[Sourced[RawSource]], *, max_events: int) -> str:
     """Sealed guardrail warning: header + up to ``max_events`` event lines.
 
     Event-derived text reaches a model, so each line is sealed inside a
-    ``<source_data>`` envelope (injection defense); the header is trusted local
-    text and sits outside the seal. Returns empty string when there are no
-    events to include (nothing to say).
+    ``<source_data>`` envelope (injection defense); the header and the origin
+    label are trusted local text (config-derived, never peer-supplied prose)
+    and sit outside the seal. Returns empty string when there are no events to
+    include (nothing to say).
     """
     from wikiforge.llm.safety import seal_source_data
 
     lines = [WHY_HEADER]
-    for event in events[:max_events]:
+    for sourced in events[:max_events]:
+        event = sourced.item
         kind = safe_event_type(event.provenance.get("type"))
         body = f"{event_date(event)} · {kind} · {event_summary(event)}"
         sealed = seal_source_data(body)
-        lines.append(f"<source_data id='raw_source:{event.id}'>{sealed}</source_data>")
+        origin = f"[{sourced.origin}] " if sourced.origin else ""
+        lines.append(f"{origin}<source_data id='raw_source:{event.id}'>{sealed}</source_data>")
     if len(lines) == 1:  # Only header, no events
         return ""
     return "\n".join(lines)
