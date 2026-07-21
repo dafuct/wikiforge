@@ -86,6 +86,7 @@ class ReadOnlyDatabase:
         if not db_path.is_file():
             raise PeerUnavailable(f"no wiki database at {db_path}")
         uri = f"{db_path.resolve().as_uri()}?mode=ro"
+        conn: aiosqlite.Connection | None = None
         try:
             conn = await aiosqlite.connect(uri, uri=True)
             conn.row_factory = aiosqlite.Row
@@ -93,6 +94,8 @@ class ReadOnlyDatabase:
             await conn.load_extension(sqlite_vec.loadable_path())
             await conn.enable_load_extension(False)
         except Exception as exc:  # noqa: BLE001 -- any open failure is "unavailable"
+            if conn is not None:
+                await conn.close()
             raise PeerUnavailable(f"cannot open {db_path}: {exc}") from exc
         return cls(conn, dim)
 

@@ -5,7 +5,9 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import aiosqlite
 import pytest
+import sqlite_vec
 
 from wikiforge.federation.peers import (
     PeerUnavailable,
@@ -30,6 +32,35 @@ async def test_open_does_not_create_anything(tmp_path: Path) -> None:
     with pytest.raises(PeerUnavailable):
         await ReadOnlyDatabase.open(target, dim=384)
     assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_open_closes_connection_when_extension_load_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A connection opened successfully must not leak if loading sqlite-vec
+    fails afterward (e.g. the extension file is missing)."""
+    home = tmp_path / "peer"
+    await init_wiki("peer", home)
+
+    close_calls = 0
+    original_close = aiosqlite.Connection.close
+
+    async def spying_close(self: aiosqlite.Connection) -> None:
+        nonlocal close_calls
+        close_calls += 1
+        await original_close(self)
+
+    def boom() -> str:
+        raise RuntimeError("extension file missing")
+
+    monkeypatch.setattr(aiosqlite.Connection, "close", spying_close)
+    monkeypatch.setattr(sqlite_vec, "loadable_path", boom)
+
+    with pytest.raises(PeerUnavailable):
+        await ReadOnlyDatabase.open(home, dim=384)
+
+    assert close_calls == 1
 
 
 @pytest.mark.asyncio
