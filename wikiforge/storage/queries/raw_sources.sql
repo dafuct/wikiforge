@@ -78,3 +78,57 @@ ON CONFLICT(session_id) DO UPDATE SET last_uuid = excluded.last_uuid, ts = exclu
 
 -- name: purge_watermarks!
 DELETE FROM capture_watermark WHERE ts < :cutoff;
+
+-- name: dev_events_for_paths
+-- `IN` (not a JOIN) so an event touching several of the queried paths yields ONE
+-- row and LIMIT counts events rather than event×path pairs. The path list arrives
+-- as a single JSON array expanded by `json_each` rather than as N bound
+-- parameters: a changed-file list for a large branch can exceed SQLite's 999
+-- parameter default, and chunking would have to be re-derived at every call site.
+SELECT rs.id, rs.content_hash, rs.canonical_url, rs.source_type, rs.title, rs.text,
+       rs.fetched_at, rs.first_seen_session_id, rs.persona, rs.provenance
+FROM raw_sources rs
+WHERE rs.source_type = 'dev_event'
+  AND rs.id IN (
+      SELECT d.source_id FROM dev_event_files d
+      WHERE d.path IN (SELECT value FROM json_each(:paths_json))
+  )
+ORDER BY rs.id DESC
+LIMIT :limit;
+
+-- name: matched_dev_event_paths
+-- Coverage, answered independently of any event limit: which of the queried
+-- paths carry recorded history at all. Index-only over idx_dev_event_files_path.
+SELECT DISTINCT d.path AS path
+FROM dev_event_files d
+WHERE d.path IN (SELECT value FROM json_each(:paths_json));
+
+-- name: dev_events_fileless_in_window
+-- "File-less" is decided by the index, not by provenance: ensure_dev_event_files()
+-- backfills the table from provenance on first use, so absence of a row is
+-- authoritative and needs no JSON string-splitting.
+-- Bounds are UTC-normalized, full-second-widened strings matching fetched_at's
+-- stored format; provenance.ts is deliberately NOT consulted, because capture
+-- writes it in a third format (trailing `Z`) that sorts differently at an equal
+-- instant.
+SELECT rs.id, rs.content_hash, rs.canonical_url, rs.source_type, rs.title, rs.text,
+       rs.fetched_at, rs.first_seen_session_id, rs.persona, rs.provenance
+FROM raw_sources rs
+WHERE rs.source_type = 'dev_event'
+  AND rs.fetched_at BETWEEN :start AND :end
+  AND NOT EXISTS (SELECT 1 FROM dev_event_files d WHERE d.source_id = rs.id)
+ORDER BY rs.id DESC
+LIMIT :limit;
+
+-- name: co_changed_paths
+-- Files that appear in the same dev events as :path — historical coupling.
+-- Exact-or-suffix like dev_events_for_path, with the same literal escaping so a
+-- `_` or `%` in a filename cannot broaden the match.
+SELECT other.path AS path, COUNT(*) AS shared
+FROM dev_event_files mine
+JOIN dev_event_files other
+  ON other.source_id = mine.source_id AND other.path <> mine.path
+WHERE mine.path = :path OR mine.path LIKE '%/' || :path_pattern ESCAPE '\'
+GROUP BY other.path
+ORDER BY shared DESC, path ASC
+LIMIT :limit;
