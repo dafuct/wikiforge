@@ -222,6 +222,38 @@ warns, so routine edits stay quiet while real decisions surface), and `guardrail
 The older `guardrail_types` whitelist is still read for one release; when both are set the exclude-list
 wins. Each file warns at most once per session, and the whole lookup is pure SQL.
 
+### Changelog and impact: the dev log as two more views
+
+`wiki changelog` and `wiki impact` read the same file-indexed dev log `wiki why` does — a changelog
+for a range of commits, and the blast radius of a source, file, or topic.
+
+```bash
+wiki changelog                        # dev-log changelog for upstream/main..HEAD, newest first
+wiki changelog v1.2.0..v1.3.0         # any git range: A..B, A...B, or a single ref
+wiki changelog --prose                # one cheap LLM call rewrites it as release notes / a PR body
+
+wiki impact wikiforge/ops/why.py      # what rests on a file
+wiki impact development-log           # ...or a topic slug
+wiki impact https://example.com/post  # ...or a source (URL, content hash, or id)
+```
+
+`wiki changelog <range>` selects the dev events behind the range's commits — matched by changed file,
+and by a file-less time window for the design discussions the `PreCompact` hook otherwise leaves
+undiscoverable — then renders them grouped by type, newest first. **The coverage footer is not
+decoration.** It states exactly how many of the range's changed files have a recorded decision, and how
+many entries were matched by file versus by time window — read it as an honest measure of how much of
+the range the dev log actually explains, not as a claim that the changelog is complete. Zero LLM by
+default; `--prose` spends one cheap-tier call turning the same rendered data into prose.
+
+`wiki impact <target>` reports what rests on a source (live citing claims and research findings), a
+file (the decisions that touched it, plus files it has historically changed alongside), or a topic (the
+sources its current article cites, and which other topics share them). **"Changed together with" is
+historical correlation, not a causal rule** — two files edited in the same turns are a coupling *hint*
+worth checking, not a rule that one must change whenever the other does. Both commands are zero-LLM
+(pure SQL over the same dev log and citation graph `wiki why` and `wiki audit` already use) and
+MCP-exposed as `build_changelog` / `impact_report`, sealed as untrusted data for the calling agent to
+synthesize.
+
 ---
 
 ## Command reference
@@ -247,6 +279,8 @@ wins. Each file warns at most once per session, and the whole lookup is pure SQL
 | `wiki capture` | Record a dev event. `--hook` (reads Claude Code `Stop` JSON on stdin), `--note "<text>"` + `--type`, or `--flush` to backfill dev-log vectors (free) with optional `--digests` to batch-summarize. |
 | `wiki recall --hook` | Read a Claude Code `UserPromptSubmit` payload on stdin and print relevant wiki excerpts for the agent's context. Zero LLM. Always exits 0. |
 | `wiki why <path>` | Show WHY a file is the way it is — the dev events that touched it, newest first. `--limit N`; `--hook` reads a `PreToolUse` payload and emits the guardrail warning. Zero LLM. |
+| `wiki changelog [range]` | Why-annotated changelog for a git range (default: upstream/main..HEAD; also accepts `A..B`, `A...B`, or a single ref). `--limit N`, `--exclude-types a,b`. Zero LLM; `--prose` rewrites it as release notes / a PR body (one cheap LLM call). |
+| `wiki impact <target>` | Blast radius of a source (URL/hash/id), a file path, or a topic slug — what claims, decisions, or co-changed files rest on it. `--limit N`, `--as source\|file\|topic` to force the reading. Zero LLM. |
 | `wiki consolidate` | Roll dev events older than `[consolidate] min_age_days` into a versioned `development-log` article. `--if-auto` runs only when `[consolidate] auto = true`. |
 | `wiki reindex --embeddings` | Rebuild every chunk vector with the active embedding model (local, zero LLM) — required after changing `local_model`. |
 | `wiki stats` | Wiki size + LLM spend. `--since <YYYY-MM-DD>` adds a spend window. |
