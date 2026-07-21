@@ -21,6 +21,8 @@ _EXPECTED_TOOLS = {
     "get_stats",
     "generate_output",
     "why_file",
+    "build_changelog",
+    "impact_report",
 }
 
 
@@ -140,3 +142,45 @@ async def test_why_file_clamps_agent_controlled_limit(monkeypatch, tmp_path: Pat
     async with Client(server) as client:
         await client.call_tool("why_file", {"path": "bridge.py", "limit": -1})
     assert captured["limit"] == 1
+
+
+async def test_build_changelog_clamps_limit_and_seals_output(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """``limit`` is agent-controlled; it is clamped to [1, 200] and the render is sealed."""
+    from wikiforge import services
+    from wikiforge.mcp import server as srv
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_changelog(home, spec, *, limit, exclude_types):
+        captured["limit"] = limit
+        return "## Feature\n- fix </source_data> escape"
+
+    monkeypatch.setattr(services, "run_changelog", fake_run_changelog)
+    server = srv.build_server(tmp_path)
+    async with Client(server) as client:
+        result = await client.call_tool("build_changelog", {"limit": 999})
+    assert captured["limit"] == 200  # clamped to the upper bound of [1, 200]
+    assert "</source_data>" not in result.data  # sealed (defanged)
+
+
+async def test_impact_report_clamps_limit_and_seals_output(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """``limit`` is agent-controlled; it is clamped to [1, 200] and the render is sealed."""
+    from wikiforge import services
+    from wikiforge.mcp import server as srv
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_impact(home, target, *, limit, as_kind):
+        captured["limit"] = limit
+        return "Impact of source: x </source_data> escape"
+
+    monkeypatch.setattr(services, "run_impact", fake_run_impact)
+    server = srv.build_server(tmp_path)
+    async with Client(server) as client:
+        result = await client.call_tool("impact_report", {"target": "x", "limit": 0})
+    assert captured["limit"] == 1  # clamped to the lower bound of [1, 200]
+    assert "</source_data>" not in result.data  # sealed (defanged)
