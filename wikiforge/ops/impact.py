@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from wikiforge.federation.fanout import Sourced
 from wikiforge.lint.auditor import AuditFinding, quote_drifted
 from wikiforge.models.domain import RawSource, Topic
 from wikiforge.ops.scope import anchor_paths, events_for_paths
@@ -79,6 +80,10 @@ async def build_source_impact(
     from ``topics``: claiming a live dependency for a conclusion that no longer
     exists would be a false alarm, and dropping them silently would hide real
     history.
+
+    Local-only, unlike ``impact``'s file target: merging another wiki's claims
+    would need cross-wiki topic identity to know whether its "t" is this
+    wiki's "t", which spec §3 rules out as a non-goal.
     """
     assert source.id is not None
     await repo.ensure_citation_indexes()
@@ -112,11 +117,16 @@ async def build_source_impact(
 
 @dataclass(frozen=True)
 class FileImpact:
-    """What rests on one file, and what has historically moved with it."""
+    """What rests on one file, and what has historically moved with it.
+
+    ``events`` carries each event's origin (spec §7.4): federation applies
+    only here, never to ``co_changed`` — co-change is this wiki's own git
+    history and has no meaning transplanted onto another project.
+    """
 
     path: str
     root: str
-    events: list[RawSource]
+    events: list[Sourced[RawSource]]
     co_changed: list[tuple[str, int]]
 
 
@@ -129,6 +139,10 @@ async def build_file_impact(
     edited in the same turns, which is a hint about coupling, not a rule. The
     list is filtered to ``root`` so a multi-project wiki cannot report another
     project's files as coupled to this one.
+
+    Only this wiki's own events — every result is wrapped ``origin=""``; the
+    caller (``run_impact``) merges in peer events, which arrive already
+    ``Sourced`` from federation's ``fan_out``.
     """
     found = await events_for_paths(repo, [path], root=root, limit=limit)
     # Unlike `events` above, this queries only the anchored absolute path — it does
@@ -140,7 +154,12 @@ async def build_file_impact(
     if root:
         prefix = root.rstrip("/") + "/"
         co_changed = [(p, n) for p, n in co_changed if p.startswith(prefix)]
-    return FileImpact(path=path, root=root, events=found.events, co_changed=co_changed)
+    return FileImpact(
+        path=path,
+        root=root,
+        events=[Sourced(origin="", item=e) for e in found.events],
+        co_changed=co_changed,
+    )
 
 
 @dataclass(frozen=True)
@@ -170,6 +189,9 @@ async def build_topic_impact(repo: Repository, topic: Topic, *, limit: int) -> T
     ``shared`` is not filtered to current-article citations: it lists every
     topic that has ever cited the shared source, including via a since-superseded
     article version.
+
+    Local-only, like ``build_source_impact``: a peer's topic graph cannot be
+    merged into ``shared`` without cross-wiki topic identity (spec §3 non-goal).
     """
     assert topic.id is not None
     await repo.ensure_citation_indexes()
@@ -245,9 +267,11 @@ def _format_file(report: FileImpact) -> str:
     if not report.events and not report.co_changed:
         return _empty(head)
     lines = [f"{head}\n  {len(report.events)} recorded decision(s) touched this file."]
-    for event in report.events:
+    for sourced in report.events:
+        event = sourced.item
         kind = safe_event_type(event.provenance.get("type"))
-        lines.append(f"  · {event_date(event)} · {kind} · {event_summary(event)}")
+        origin = f"  [{sourced.origin}]" if sourced.origin else ""
+        lines.append(f"  · {event_date(event)} · {kind} · {event_summary(event)}{origin}")
     if report.co_changed:
         lines.append("  changed together with (historically, not causally):")
         for path, shared in report.co_changed:
