@@ -54,23 +54,34 @@ class WikiAuditor:
 
         findings: list[AuditFinding] = []
         for row in await self._repo.citations_with_source_for_topic(topic.id):
-            if not row.quote:
+            if not quote_drifted(row.quote, row.source_text):
                 continue
-            normalized_quote = _normalize(row.quote)
-            if not normalized_quote:
-                continue
-            if normalized_quote not in _normalize(row.source_text):
-                findings.append(
-                    AuditFinding(
-                        article_slug=slug,
-                        claim=row.claim,
-                        raw_source_id=row.raw_source_id,
-                        issue="quote not found in source",
-                    )
+            findings.append(
+                AuditFinding(
+                    article_slug=slug,
+                    claim=row.claim,
+                    raw_source_id=row.raw_source_id,
+                    issue="quote not found in source",
                 )
+            )
         return findings
 
 
 def _normalize(text: str) -> str:
     """Lowercase and collapse whitespace runs to a single space."""
     return _WHITESPACE_RE.sub(" ", text.lower()).strip()
+
+
+def quote_drifted(quote: str | None, source_text: str) -> bool:
+    """True when ``quote`` is non-empty and no longer appears in ``source_text``.
+
+    Comparison is lowercased and whitespace-collapsed. A citation with no quote
+    (or a whitespace-only one) was never claiming a verbatim match, so it can
+    never drift.
+    """
+    if not quote:
+        return False
+    normalized = _normalize(quote)
+    if not normalized:
+        return False
+    return normalized not in _normalize(source_text)

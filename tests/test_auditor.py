@@ -112,3 +112,12 @@ async def test_normalized_match_is_whitespace_and_case_insensitive(repo: Reposit
 async def test_unknown_topic_raises_value_error(repo: Repository) -> None:
     with pytest.raises(ValueError):
         await WikiAuditor(repo).audit_topic("nonexistent")
+
+
+def test_quote_drifted_ignores_case_and_whitespace() -> None:
+    from wikiforge.lint.auditor import quote_drifted
+
+    assert quote_drifted("The   Exact\nSource", "the exact source text") is False
+    assert quote_drifted("never written", "the exact source text") is True
+    assert quote_drifted(None, "anything") is False
+    assert quote_drifted("   ", "anything") is False
