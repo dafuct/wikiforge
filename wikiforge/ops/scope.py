@@ -83,6 +83,8 @@ async def events_for_absolute(
     try:
         return await repo.dev_events_for_path(path, limit=limit)
     except sqlite3.OperationalError:
+        if not read_only:
+            raise
         return []
 
 
@@ -146,4 +148,6 @@ async def events_for_paths(
             events=found[:limit], matched=matched, fell_back=bool(root) and bool(found)
         )
     except sqlite3.OperationalError:
+        if not read_only:
+            raise
         return PathEvents(events=[], matched=set(), fell_back=False)

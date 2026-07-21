@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from wikiforge.federation.peers import ReadOnlyDatabase
+from wikiforge.models.domain import RawSource
 from wikiforge.ops.scope import events_for_absolute, events_for_paths
 from wikiforge.services import init_wiki
 from wikiforge.storage.db import Database
@@ -83,5 +85,45 @@ async def test_local_behaviour_is_unchanged(tmp_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type='table' AND name='dev_event_files'"
         )
         assert row is not None
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_events_for_paths_propagates_operational_error_when_not_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unlike a peer, the local path must surface a real DB failure, not read it as "no history"."""
+    home = tmp_path / "local"
+    await init_wiki("local", home)
+    db = await Database.open(home, dim=384)
+
+    async def boom(*_args: object, **_kwargs: object) -> list[RawSource]:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Repository, "dev_events_for_path", boom)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            await events_for_paths(Repository(db), ["a.py"], root="", limit=5)
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_events_for_absolute_propagates_operational_error_when_not_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same guarantee for the absolute-path entry point the guardrail calls."""
+    home = tmp_path / "local"
+    await init_wiki("local", home)
+    db = await Database.open(home, dim=384)
+
+    async def boom(*_args: object, **_kwargs: object) -> list[RawSource]:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Repository, "dev_events_for_path", boom)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            await events_for_absolute(Repository(db), "/repo/a.py", limit=5)
     finally:
         await db.close()
