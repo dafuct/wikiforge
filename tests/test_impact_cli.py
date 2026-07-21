@@ -60,3 +60,13 @@ async def test_as_override_forces_the_topic_reading(wiki_home: Path) -> None:
 
     with pytest.raises(ValueError, match="topic"):
         await services.run_impact(wiki_home, "README.md", limit=10, as_kind="topic")
+
+
+async def test_an_invalid_as_kind_is_rejected_at_the_service_layer(wiki_home: Path) -> None:
+    """The MCP tool has no --as validation of its own; run_impact must guard it."""
+    from wikiforge import services
+
+    await services.init_wiki("T", wiki_home)
+
+    with pytest.raises(ValueError, match="source, file, topic"):
+        await services.run_impact(wiki_home, "README.md", limit=10, as_kind="bogus")

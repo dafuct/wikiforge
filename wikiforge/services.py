@@ -1189,10 +1189,15 @@ async def run_impact(
 
     Read-only and zero-LLM. ``as_kind`` forces the interpretation when the
     automatic classification would guess wrong (a topic slug that looks like a
-    filename, say).
+    filename, say). Raises ``ValueError`` for an ``as_kind`` other than
+    "source", "file", or "topic" — checked here, at the shared service layer,
+    so every caller (CLI and MCP alike) is protected even if a presentation
+    layer forgets its own check.
     """
     from wikiforge.ops import impact as impact_ops
 
+    if as_kind is not None and as_kind not in ("source", "file", "topic"):
+        raise ValueError(f"--as must be one of: source, file, topic (got {as_kind!r})")
     kind = impact_ops.classify_target(target, forced=as_kind)  # type: ignore[arg-type]
     cfg = load_config(home)
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
