@@ -689,12 +689,33 @@ async def run_capture_note(home: Path, note: str, *, event_type: str | None) -> 
         await db.close()
 
 
+def _watermark_key(session_id: str, surface: str) -> str:
+    """Namespace a capture watermark row by capturing surface.
+
+    Stop, SubagentStop, and PreCompact all read the SAME transcript but consume
+    COMPLEMENTARY turn sets (Stop/SubagentStop take edited turns, PreCompact
+    takes file-less turns). A bare ``session_id`` key means whichever surface
+    fires last silently overwrites the mark the others rely on, hiding each
+    surface's own unconsumed turns from itself — see Finding 1 of the
+    whole-branch review. Namespacing by surface is safe precisely because the
+    turn sets are disjoint: a surface can only ever advance past turns it
+    itself is responsible for, so per-surface marks cannot cause double-capture
+    of the same turn by the same surface.
+    """
+    return f"{session_id}:{surface}"
+
+
 async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
     """Auto-capture a dev event from a Claude Code Stop-hook payload (best-effort)."""
     from datetime import UTC, datetime
 
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.ops.capture import capture_event, parse_hook_stdin
+    from wikiforge.ops.capture import (
+        capture_event,
+        default_git_runner,
+        git_context,
+        parse_hook_stdin,
+    )
     from wikiforge.ops.recall import parse_hook_session_id
     from wikiforge.ops.transcript import last_entry_uuid, read_transcript, turns_since
 
@@ -712,9 +733,11 @@ async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
     try:
         repo = Repository(db)
         last_uuid = None
+        watermark_key = None
         if session_id is not None:
+            watermark_key = _watermark_key(session_id, "stop")
             await repo.ensure_capture_watermark()
-            last_uuid = await repo.get_watermark(session_id)
+            last_uuid = await repo.get_watermark(watermark_key)
         turns = turns_since(entries, last_uuid)
         edited = [t for t in turns if t.files]
         if not edited:
@@ -723,19 +746,21 @@ async def run_capture_hook(home: Path, hook_stdin: str) -> RawSource | None:
             llm = build_llm_provider(cfg, CostTracker(repo, cfg))
         except Exception:
             llm = None
+        git_meta = git_context(default_git_runner)
         source: RawSource | None = None
         for turn in edited:
             captured = await capture_event(
                 repo, request=turn.request, files=turn.files, event_type=None,
                 default_type="change", origin="hook", cfg=cfg, llm=llm, now=datetime.now(UTC),
+                git_meta=git_meta,
             )
             if captured is not None:
                 source = captured
-        if session_id is not None and source is not None:
-            mark = last_entry_uuid(entries)
+        if watermark_key is not None and source is not None:
+            mark = edited[-1].uuid or last_entry_uuid(entries)
             if mark is not None:
                 await repo.set_watermark(
-                    session_id, mark, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    watermark_key, mark, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
                 )
         return source
     finally:
@@ -746,16 +771,22 @@ async def run_capture_subagent(home: Path, hook_stdin: str) -> RawSource | None:
     """Capture a subagent's work from a SubagentStop payload (best-effort, zero LLM-free path).
 
     Subagents run with their own transcript, so the main session's Stop hook
-    never sees their edits. Their own session id keys the watermark, which is
-    what keeps parent and child from capturing the same work twice. Every edited
-    turn since the watermark is captured (mirrors ``run_capture_hook``'s loop),
-    not just the last one, so a subagent that makes several distinct edits
-    doesn't silently lose all but the final turn.
+    never sees their edits. Their own session id — namespaced with the
+    ``:subagent`` surface suffix (see :func:`_watermark_key`) — keys the
+    watermark, which is what keeps parent and child from capturing the same
+    work twice. Every edited turn since the watermark is captured (mirrors
+    ``run_capture_hook``'s loop), not just the last one, so a subagent that
+    makes several distinct edits doesn't silently lose all but the final turn.
     """
     from datetime import UTC, datetime
 
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.ops.capture import capture_event, parse_hook_stdin
+    from wikiforge.ops.capture import (
+        capture_event,
+        default_git_runner,
+        git_context,
+        parse_hook_stdin,
+    )
     from wikiforge.ops.recall import parse_hook_session_id
     from wikiforge.ops.transcript import last_entry_uuid, read_transcript, turns_since
 
@@ -780,9 +811,11 @@ async def run_capture_subagent(home: Path, hook_stdin: str) -> RawSource | None:
     try:
         repo = Repository(db)
         last_uuid = None
+        watermark_key = None
         if session_id is not None:
+            watermark_key = _watermark_key(session_id, "subagent")
             await repo.ensure_capture_watermark()
-            last_uuid = await repo.get_watermark(session_id)
+            last_uuid = await repo.get_watermark(watermark_key)
         turns = turns_since(entries, last_uuid)
         edited = [t for t in turns if t.files]
         if not edited:
@@ -791,21 +824,22 @@ async def run_capture_subagent(home: Path, hook_stdin: str) -> RawSource | None:
             llm = build_llm_provider(cfg, CostTracker(repo, cfg))
         except Exception:
             llm = None
+        git_meta = git_context(default_git_runner)
         source: RawSource | None = None
         for turn in edited:
             captured = await capture_event(
                 repo, request=turn.request, files=turn.files, event_type=None,
                 default_type="change", origin="subagent", cfg=cfg, llm=llm,
-                now=datetime.now(UTC),
+                now=datetime.now(UTC), git_meta=git_meta,
                 extra_provenance={"parent_session_id": parent} if parent else None,
             )
             if captured is not None:
                 source = captured
-        if session_id is not None and source is not None:
-            mark = last_entry_uuid(entries)
+        if watermark_key is not None and source is not None:
+            mark = edited[-1].uuid or last_entry_uuid(entries)
             if mark is not None:
                 await repo.set_watermark(
-                    session_id, mark, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    watermark_key, mark, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
                 )
         return source
     finally:
@@ -828,12 +862,21 @@ async def run_capture_precompact(home: Path, hook_stdin: str) -> RawSource | Non
     ``capture_event`` call actually returned a source (mirrors the Task 5/6
     fix): advancing on ``session_id`` alone would let a persistence failure
     silently discard the swept turns forever, since the next sweep only looks
-    at turns *since* the watermark.
+    at turns *since* the watermark. The mark itself is keyed with the
+    ``:precompact`` surface suffix (see :func:`_watermark_key`) so this sweep
+    can never advance past — and hide from Stop/SubagentStop — turns that carry
+    file edits; PreCompact only ever consumes file-less turns, so it only ever
+    marks up to the last file-less turn it actually consumed.
     """
     from datetime import UTC, datetime
 
     from wikiforge.activity.cost import CostTracker
-    from wikiforge.ops.capture import capture_event, parse_hook_stdin
+    from wikiforge.ops.capture import (
+        capture_event,
+        default_git_runner,
+        git_context,
+        parse_hook_stdin,
+    )
     from wikiforge.ops.recall import parse_hook_session_id
     from wikiforge.ops.transcript import last_entry_uuid, read_transcript, turns_since
 
@@ -851,9 +894,11 @@ async def run_capture_precompact(home: Path, hook_stdin: str) -> RawSource | Non
     try:
         repo = Repository(db)
         last_uuid = None
+        watermark_key = None
         if session_id is not None:
+            watermark_key = _watermark_key(session_id, "precompact")
             await repo.ensure_capture_watermark()
-            last_uuid = await repo.get_watermark(session_id)
+            last_uuid = await repo.get_watermark(watermark_key)
         fileless = [t for t in turns_since(entries, last_uuid) if not t.files]
         if not fileless:
             return None
@@ -867,17 +912,18 @@ async def run_capture_precompact(home: Path, hook_stdin: str) -> RawSource | Non
             llm = build_llm_provider(cfg, CostTracker(repo, cfg))
         except Exception:
             llm = None
+        git_meta = git_context(default_git_runner)
         source = await capture_event(
             repo, request=payload, files=[], event_type=None,
             default_type="research", origin="precompact", cfg=cfg, llm=llm,
-            now=datetime.now(UTC),
+            now=datetime.now(UTC), git_meta=git_meta,
             extra_provenance={"turns": str(len(fileless))},
         )
-        if session_id is not None and source is not None:
-            mark = last_entry_uuid(entries)
+        if watermark_key is not None and source is not None:
+            mark = fileless[-1].uuid or last_entry_uuid(entries)
             if mark is not None:
                 await repo.set_watermark(
-                    session_id, mark, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    watermark_key, mark, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
                 )
         return source
     finally:
@@ -995,6 +1041,13 @@ async def run_why_hook(home: Path, hook_stdin: str) -> str:
             await repo.purge_why_log(
                 (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
             )
+            try:
+                await repo.ensure_capture_watermark()
+                await repo.purge_watermarks(
+                    (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
+            except Exception:
+                pass  # opportunistic hygiene only — must never break the guardrail
             if await repo.why_warned(session_id, path):
                 return ""
         warning = render_warning(events, max_events=cfg.why.guardrail_max_events)

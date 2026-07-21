@@ -213,16 +213,14 @@ async def test_sync_mode_still_calls_llm(tmp_path: Path) -> None:
         ("дослідити чому падає тест", [], "research"),
         ("refactor the capture module", [], "refactor"),
         ("bump dependencies and fix lint", [], "bugfix"),  # first matching rule wins
-        # "add" now matches the new feature text-rule, which fires before file
-        # signals are ever consulted — so these three resolve to "feature"
-        # regardless of `files` (was docs/chore/None under the old rules,
-        # back when "add retry logic" matched no text rule at all). The
-        # all-.md/test-path/no-signal fallback branches these used to exercise
-        # are now covered with genuinely neutral text in
-        # test_infer_event_type_path_signals.
-        ("add retry logic", ["docs/guide.md", "docs/api.md"], "feature"),
-        ("add retry logic", ["tests/test_retry.py"], "feature"),
-        ("add retry logic", ["wikiforge/ops/retry.py"], "feature"),
+        # The "feature" text rule was removed (Finding 5 of the whole-branch
+        # review): measured over the real corpus it never decided a single
+        # event while shadowing the file-path signals below for every request
+        # using "add"/"build"/"create". These three go back to exercising
+        # those file signals, as originally written.
+        ("add retry logic", ["/r/docs/x.md"], "docs"),
+        ("add retry logic", ["/r/tests/test_x.py"], "chore"),
+        ("add retry logic", [], None),
         # "fixtures" must NOT match bugfix's "fix"; "test" -> chore
         ("update the test fixtures for the pipeline", ["a.py"], "chore"),
         # "cite" must NOT match chore's "ci"; "changelog" -> docs
@@ -275,8 +273,14 @@ def test_infer_event_type_path_signals_non_python_test_conventions() -> None:
 def test_infer_event_type_extended_request_rules() -> None:
     from wikiforge.ops.capture import infer_event_type
 
-    assert infer_event_type("implement the retry loop", []) == "feature"
-    assert infer_event_type("реалізуй новий ендпоінт", []) == "feature"
+    # The "feature" text rule (implement/add/build/create/introduce) was
+    # removed (Finding 5 of the whole-branch review) — "implement"/"реалізуй"
+    # no longer force a classification on their own; with no file signal to
+    # fall back on, these now resolve to None.
+    assert infer_event_type("implement the retry loop", []) is None
+    assert infer_event_type("реалізуй новий ендпоінт", []) is None
+    # The spec-rule extension (plan/план) and chore-rule extension
+    # (review/рев'ю) are unaffected and still fire.
     assert infer_event_type("add a plan for the next cycle", []) == "spec"
     assert infer_event_type("напиши план", []) == "spec"
     assert infer_event_type("review this diff", []) == "chore"

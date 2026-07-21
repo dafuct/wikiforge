@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from wikiforge.config.settings import write_default_config
-from wikiforge.services import run_capture_precompact
+from wikiforge.services import _watermark_key, run_capture_precompact
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
 
@@ -120,6 +120,6 @@ async def test_precompact_does_not_advance_watermark_when_nothing_is_persisted(
     try:
         repo = Repository(db)
         await repo.ensure_capture_watermark()
-        assert await repo.get_watermark(session_id) is None  # never advanced
+        assert await repo.get_watermark(_watermark_key(session_id, "precompact")) is None
     finally:
         await db.close()

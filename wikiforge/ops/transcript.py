@@ -60,7 +60,15 @@ def strip_envelopes(text: str) -> str:
     arguments_tail: list[str] = []
     if marker_matches:
         last = marker_matches[-1]
-        arguments_tail = [cleaned[last.end() :].strip()]
+        tail = cleaned[last.end() :]
+        # The tail is the user's real request and may itself contain a paired
+        # envelope (e.g. a <system-reminder> injected after the ARGUMENTS:
+        # marker) — run the same substitutions here before promoting it, or
+        # it survives verbatim into the request (Finding 2 of the whole-branch
+        # review).
+        for pattern in _PAIRED_RE:
+            tail = pattern.sub(" ", tail)
+        arguments_tail = [tail.strip()]
         cleaned = cleaned[: last.start()]
     for pattern in _PAIRED_RE:
         cleaned = pattern.sub(" ", cleaned)

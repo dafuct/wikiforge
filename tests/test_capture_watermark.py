@@ -1,4 +1,12 @@
-"""The watermark keeps Stop / SubagentStop / PreCompact from capturing the same turn."""
+"""Per-surface watermarks: Stop / SubagentStop / PreCompact never re-capture a
+turn they already consumed, AND — because each surface keys its mark with its
+own name (``f"{session_id}:{surface}"``, see ``services._watermark_key``) —
+never erase each other's progress either. The three surfaces read the same
+transcript but consume COMPLEMENTARY turn sets (Stop/SubagentStop take edited
+turns, PreCompact takes file-less turns), so a single shared key per session
+used to mean whichever surface fired last silently blinded the others to
+their own unconsumed turns.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +14,7 @@ import json
 from pathlib import Path
 
 from wikiforge.config.settings import write_default_config
-from wikiforge.services import run_capture_hook
+from wikiforge.services import run_capture_hook, run_capture_precompact
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import CAPTURE_WATERMARK_DDL, Repository
 
@@ -187,3 +195,78 @@ async def test_hook_without_session_id_does_not_touch_the_watermark(tmp_path: Pa
         assert await repo.get_watermark("any-other-session") is None
     finally:
         await db.close()
+
+
+# --- Finding 1 (whole-branch review): per-surface keys stop Stop/PreCompact erasing
+# each other's turns, since they consume COMPLEMENTARY sets from the same transcript ---
+
+
+async def test_stop_capture_does_not_hide_fileless_turns_from_precompact(
+    tmp_path: Path,
+) -> None:
+    """Stop consuming the edited turn must not blind PreCompact to the file-less
+    turn that preceded it.
+
+    Under the old shared ``session_id`` key, Stop's capture advanced the mark to
+    the end of the transcript (past BOTH turns, even though Stop itself only
+    ever consumes the edited one), so a later PreCompact call found nothing left
+    to sweep and returned ``None`` — the file-less design discussion, the whole
+    point of the PreCompact surface, was lost forever. Under the fix each
+    surface keys its own mark, so PreCompact's watermark is untouched by Stop.
+    """
+    home = tmp_path / "wiki"
+    await _init_wiki(home)
+    transcript = tmp_path / "t.jsonl"
+    distinctive = "discuss the frobnicator rewrite approach before committing"
+    _write_transcript(
+        transcript,
+        [
+            _user_entry("u1", distinctive),
+            _user_entry("u2", "apply the auth-token fix"),
+            _edit_entry("u3", "/r/auth.py"),
+        ],
+    )
+    stdin = json.dumps({"transcript_path": str(transcript), "session_id": "s1"})
+
+    stop_result = await run_capture_hook(home, stdin)
+    assert stop_result is not None  # the edited turn was captured
+
+    precompact_result = await run_capture_precompact(home, stdin)
+    assert precompact_result is not None  # fails under the old shared key
+    assert distinctive in precompact_result.text
+
+
+async def test_precompact_does_not_hide_edits_from_stop(tmp_path: Path) -> None:
+    """PreCompact sweeping the file-less turn must not blind Stop to the
+    in-flight edited turn that follows it.
+
+    Auto-compaction fires mid-turn by definition, so in production PreCompact's
+    mark can land inside a turn that has not finished editing yet. Reproduced
+    here without needing an actual mid-stream read: under the old shared
+    ``session_id`` key + end-of-transcript mark, PreCompact's successful sweep
+    of the file-less turn advanced the watermark past the LAST entry in the
+    file — the trailing edit — even though PreCompact never consumed that
+    turn. Stop's later call then found nothing after that mark and returned
+    ``None``, permanently losing the edit. Under the fix, PreCompact marks only
+    up to the last turn IT consumed, on ITS OWN key, so Stop's independent scan
+    still finds the edited turn.
+    """
+    home = tmp_path / "wiki"
+    await _init_wiki(home)
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        [
+            _user_entry("u1", "discuss the frobnicator rewrite approach"),
+            _user_entry("u2", "apply the auth fix"),
+            _edit_entry("u3", "/r/auth_fix.py"),
+        ],
+    )
+    stdin = json.dumps({"transcript_path": str(transcript), "session_id": "s1"})
+
+    precompact_result = await run_capture_precompact(home, stdin)
+    assert precompact_result is not None  # the file-less turn was swept
+
+    stop_result = await run_capture_hook(home, stdin)
+    assert stop_result is not None  # fails under the old shared key/mark
+    assert "/r/auth_fix.py" in stop_result.text
