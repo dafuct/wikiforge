@@ -24,7 +24,7 @@ from wikiforge.config.settings import (
 from wikiforge.embed.factory import build_embedding_provider, effective_embedding_dim
 from wikiforge.embed.provider import EmbeddingProvider
 from wikiforge.ingest import sources as ingest_sources
-from wikiforge.lint.auditor import AuditFinding, WikiAuditor
+from wikiforge.lint.auditor import WikiAuditor
 from wikiforge.lint.linter import LintFinding, WikiLinter
 from wikiforge.llm.factory import build_llm_provider
 from wikiforge.models.domain import (
@@ -50,6 +50,7 @@ from wikiforge.storage.repository import Repository
 
 if TYPE_CHECKING:
     from wikiforge.ops.consolidate import ConsolidateStats
+    from wikiforge.ops.impact import AuditResult
     from wikiforge.search.retriever import Reranker
 
 
@@ -558,20 +559,28 @@ async def run_refresh(home: Path, *, run: bool) -> list[Topic]:
         await db.close()
 
 
-async def run_audit(home: Path, slug: str) -> list[AuditFinding]:
-    """Re-verify a topic's citation quotes against their immutable raw sources.
+async def run_audit(home: Path, slug: str, *, impact: bool = True) -> AuditResult:
+    """Re-verify a topic's citation quotes, and show what else rests on drifted sources.
 
-    Resolves the topic by slug and delegates to
-    :meth:`~wikiforge.lint.auditor.WikiAuditor.audit_topic`, which raises
-    ``ValueError`` for an unknown slug. Returns an empty list when no citation
-    drift is found.
+    The drift check is pure string comparison — zero LLM — so chaining into the
+    blast radius costs nothing. One impact report per *distinct* drifted source,
+    not per finding. ``impact=False`` restores the pre-chaining output.
     """
+    from wikiforge.ops.impact import AuditResult, build_source_impact
+
     cfg = load_config(home)
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:
         repo = Repository(db)
-        auditor = WikiAuditor(repo)
-        return await auditor.audit_topic(slug)
+        findings = await WikiAuditor(repo).audit_topic(slug)
+        if not impact or not findings:
+            return AuditResult(findings=findings, impacts=[])
+        impacts = []
+        for source_id in dict.fromkeys(f.raw_source_id for f in findings):
+            source = await repo.get_raw_source_by_id(source_id)
+            if source is not None:
+                impacts.append(await build_source_impact(repo, source, limit=20))
+        return AuditResult(findings=findings, impacts=impacts)
     finally:
         await db.close()
 

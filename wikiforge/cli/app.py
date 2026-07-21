@@ -282,22 +282,29 @@ def lint(
 def audit(
     topic: str = typer.Argument(..., help="Topic slug to audit for citation drift."),
     home: str | None = HomeOption,
+    no_impact: bool = typer.Option(
+        False, "--no-impact", help="Skip the blast radius of each drifted source."
+    ),
 ) -> None:
     """Re-verify a topic's citations still match their (immutable) raw sources."""
+    from wikiforge.ops.impact import format_impact
     from wikiforge.services import run_audit
 
     target_home = resolve_home(home)
     try:
-        findings = asyncio.run(run_audit(target_home, topic))
+        result = asyncio.run(run_audit(target_home, topic, impact=not no_impact))
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from None
-    if not findings:
+    if not result.findings:
         typer.echo("No citation drift found.")
         return
-    for finding in findings:
+    for finding in result.findings:
         typer.echo(f"{finding.claim} -> source {finding.raw_source_id}: {finding.issue}")
-    typer.echo(f"\n{len(findings)} issue(s) found")
+    typer.echo(f"\n{len(result.findings)} issue(s) found")
+    for report in result.impacts:
+        typer.echo("")
+        typer.echo(format_impact(report))
 
 
 @app.command()
