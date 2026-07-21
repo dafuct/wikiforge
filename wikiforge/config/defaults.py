@@ -124,4 +124,15 @@ guardrail_max_events = 2   # max events per warning
 period = "week"        # rollup granularity: week | month
 min_age_days = 14      # only events older than this are consolidated
 auto = false           # also run at SessionStart (wiki consolidate --if-auto)
+
+[federation]
+enabled = true          # read peers registered with `wiki peers add` (none by default)
+peer_timeout_ms = 500   # per-peer wall clock; a slow peer is dropped, never awaited
+
+[maintain]
+enabled = true
+window_hours = 24       # rolling budget window
+max_calls_24h = 8       # max LLM calls automatic maintenance may make per window
+max_usd_24h = 0.5       # and the USD ceiling; whichever binds first stops the run
+jobs = ["vectors", "paths", "peers", "digests", "consolidate"]
 """
