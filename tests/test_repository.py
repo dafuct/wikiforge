@@ -7,8 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from wikiforge.models.domain import ActivityEntry, Article, LlmCall, RawSource, Topic
-from wikiforge.models.enums import SourceType, Volatility
+from wikiforge.models.domain import (
+    ActivityEntry,
+    Article,
+    LlmCall,
+    RawSource,
+    ResearchFinding,
+    ResearchSession,
+    Topic,
+)
+from wikiforge.models.enums import SourceType, Stance, Volatility
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
 
@@ -96,6 +104,23 @@ async def _dev_event(repo, text: str, *, pending: bool) -> int:
         provenance={"digest": "pending"} if pending else {},
     )
     source_id, _ = await repo.ingest_raw_source(src)
+    return source_id
+
+
+async def _plain_source(
+    repo: Repository, *, content_hash: str, text: str, url: str | None = None
+) -> int:
+    """Insert one ordinary (non-dev-event) raw source; return its id."""
+    source_id, _ = await repo.ingest_raw_source(
+        RawSource(
+            content_hash=content_hash,
+            canonical_url=url,
+            source_type=SourceType.TEXT,
+            title=content_hash,
+            text=text,
+            fetched_at=datetime.fromisoformat("2026-07-01T00:00:00+00:00"),
+        )
+    )
     return source_id
 
 
@@ -341,3 +366,70 @@ async def test_co_changed_paths_accepts_a_relative_suffix(db_repo) -> None:
     co = await repo.co_changed_paths("x.py", limit=10)
 
     assert co == [("/r/near.py", 1)]
+
+
+async def test_citations_for_source_returns_the_articles_resting_on_it(db_repo) -> None:
+    db, repo = db_repo
+    topic_id = await repo.upsert_topic(Topic(slug="t1", title="T One"))
+    article = await repo.insert_next_article_version(
+        Article(topic_id=topic_id, slug="t1", title="A One", body_md="b",
+                path="p", confidence=0.9, compile_digest="d", version=0)
+    )
+    assert article.id is not None
+    src_id = await _plain_source(repo, content_hash="h1", text="the source text")
+    await repo.insert_citation(article.id, "a claim", src_id, "the source")
+
+    rows = await repo.citations_for_source(src_id, limit=10)
+
+    assert len(rows) == 1
+    assert rows[0].claim == "a claim"
+    assert rows[0].quote == "the source"
+    assert rows[0].article_id == article.id
+    assert rows[0].article_title == "A One"
+    assert rows[0].topic_id == topic_id
+    assert rows[0].topic_slug == "t1"
+
+
+async def test_citations_for_source_includes_superseded_article_versions(db_repo) -> None:
+    """Old versions stay cited; the caller decides what to do with them."""
+    db, repo = db_repo
+    topic_id = await repo.upsert_topic(Topic(slug="t1", title="T One"))
+    src_id = await _plain_source(repo, content_hash="h1", text="the source text")
+    for _ in range(2):
+        art = await repo.insert_next_article_version(
+            Article(topic_id=topic_id, slug="t1", title="A One", body_md="b",
+                    path="p", confidence=0.9, compile_digest="d", version=0)
+        )
+        assert art.id is not None
+        await repo.insert_citation(art.id, "a claim", src_id, None)
+
+    rows = await repo.citations_for_source(src_id, limit=10)
+
+    assert len({r.article_id for r in rows}) == 2
+
+
+async def test_findings_for_source_returns_persona_and_summary(db_repo) -> None:
+    db, repo = db_repo
+    src_id = await _plain_source(repo, content_hash="h2", text="x")
+    session_id = await repo.create_research_session(ResearchSession(mode="quick"))
+    await repo.add_finding(
+        ResearchFinding(
+            session_id=session_id, persona="skeptic", raw_source_id=src_id,
+            summary="doubtful", stance=Stance.AGAINST,
+        )
+    )
+
+    assert await repo.findings_for_source(src_id, limit=10) == [("skeptic", "doubtful")]
+
+
+async def test_get_raw_source_by_id_and_url(db_repo) -> None:
+    db, repo = db_repo
+    src_id = await _plain_source(repo, content_hash="h3", text="x", url="https://e.example/a")
+
+    by_id = await repo.get_raw_source_by_id(src_id)
+    by_url = await repo.get_raw_source_by_url("https://e.example/a")
+
+    assert by_id is not None and by_id.id == src_id
+    assert by_url is not None and by_url.id == src_id
+    assert await repo.get_raw_source_by_id(999999) is None
+    assert await repo.get_raw_source_by_url("https://nope.example/") is None

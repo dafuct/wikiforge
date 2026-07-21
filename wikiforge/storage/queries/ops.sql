@@ -44,3 +44,34 @@ RETURNING id;
 
 -- name: set_topic_status!
 UPDATE topics SET status = :status WHERE slug = :slug;
+
+-- name: citations_for_source
+-- The reverse citation edge: which claims, in which articles, rest on a source.
+-- Every article version is returned, including superseded ones; the caller
+-- decides which are live (a dependency on a conclusion that no longer exists
+-- would be a false alarm, and dropping it here would hide real history).
+SELECT c.claim_text AS claim, c.quote AS quote, c.article_id AS article_id,
+       a.title AS article_title, a.topic_id AS topic_id, t.slug AS topic_slug
+FROM citations c
+JOIN articles a ON a.id = c.article_id
+JOIN topics t ON t.id = a.topic_id
+WHERE c.raw_source_id = :raw_source_id
+ORDER BY c.id DESC
+LIMIT :limit;
+
+-- name: findings_for_source
+SELECT persona, summary
+FROM research_findings
+WHERE raw_source_id = :raw_source_id
+ORDER BY id DESC
+LIMIT :limit;
+
+-- name: get_raw_source_by_id^
+SELECT id, content_hash, canonical_url, source_type, title, text,
+       fetched_at, first_seen_session_id, persona, provenance
+FROM raw_sources WHERE id = :source_id;
+
+-- name: get_raw_source_by_url^
+SELECT id, content_hash, canonical_url, source_type, title, text,
+       fetched_at, first_seen_session_id, persona, provenance
+FROM raw_sources WHERE canonical_url = :canonical_url ORDER BY id DESC LIMIT 1;

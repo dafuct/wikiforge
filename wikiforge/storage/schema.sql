@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS citations (
     raw_source_id INTEGER NOT NULL REFERENCES raw_sources(id),
     quote TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_citations_raw_source ON citations(raw_source_id);
+CREATE INDEX IF NOT EXISTS idx_citations_article ON citations(article_id);
 
 CREATE TABLE IF NOT EXISTS conflicts (
     id INTEGER PRIMARY KEY,

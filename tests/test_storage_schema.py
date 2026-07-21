@@ -78,3 +78,13 @@ async def test_sqlite_vec_knn(db: Database) -> None:
         ("[1,0,0,0,0,0,0,0]",),
     )
     assert rows[0]["rowid"] == 1
+
+
+def test_citation_indexes_ddl_matches_schema_sql() -> None:
+    """The DDL constant and schema.sql must stay byte-identical (single source)."""
+    from wikiforge.storage.repository import CITATION_INDEXES_DDL
+
+    schema = (
+        Path(__file__).resolve().parents[1] / "wikiforge" / "storage" / "schema.sql"
+    ).read_text(encoding="utf-8")
+    assert CITATION_INDEXES_DDL in schema
