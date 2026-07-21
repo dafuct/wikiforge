@@ -422,14 +422,22 @@ async def run_query(home: Path, query: str, *, depth: str, scope: str = "all") -
 
 async def run_extract(
     home: Path, query: str, *, depth: str, scope: str = "all"
-) -> list[ChunkTarget]:
+) -> list[Sourced[ChunkTarget]]:
     """Retrieve cited excerpts with NO LLM provider constructed (zero-LLM read path).
 
     Builds only the embedder + retriever — never :func:`~wikiforge.llm.factory.build_llm_provider`
     — then delegates to :func:`~wikiforge.query.service.extract_query`. Intended for a
     calling agent whose context is already paid for, so it can synthesize the answer
     itself instead of paying for a second LLM round trip.
+
+    Federated (cycle 4): the query is embedded once here and that SAME vector is
+    reused both for the local retrieval and for every compatible peer's vector
+    search — sound only because a peer's contribution is gated on its stamped
+    ``embedding_model`` matching this wiki's active one (see ``extract_query``'s
+    ``require_compat`` fan-out). Reuses the embedder already built above; a second
+    embedding provider is never constructed.
     """
+    from wikiforge.federation.fanout import active_peers
     from wikiforge.query.service import extract_query
     from wikiforge.search.retriever import HybridRetriever
 
@@ -440,7 +448,18 @@ async def run_extract(
         embedder = build_embedding_provider(cfg, repo)
         await ensure_embedding_compat(repo, embedder)
         retriever = HybridRetriever(repo, embedder, cfg, reranker=_reranker_for(cfg, depth))
-        return await extract_query(retriever, query, depth=depth, scope=scope)
+        (query_vec,) = await embedder.embed([query], kind="query")
+        return await extract_query(
+            retriever,
+            query,
+            depth=depth,
+            scope=scope,
+            peers=active_peers(cfg),
+            dim=effective_embedding_dim(cfg),
+            cfg=cfg,
+            query_vec=query_vec,
+            local_model=embedder.model,
+        )
     finally:
         await db.close()
 

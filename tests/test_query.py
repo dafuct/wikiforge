@@ -188,15 +188,25 @@ class _SpyRetriever:
         self.targets = targets
         self.calls = []
 
-    async def retrieve(self, query, *, depth="standard", include_archived=False, owner_types=None):
+    async def retrieve(
+        self,
+        query,
+        *,
+        depth="standard",
+        include_archived=False,
+        owner_types=None,
+        query_vec=None,
+    ):
         self.calls.append({"query": query, "depth": depth, "owner_types": owner_types})
         return self.targets
 
 
 async def test_extract_query_returns_chunks_without_llm() -> None:
+    """No peers -> local-only Sourced results, byte-identical content to pre-federation."""
     retriever = _SpyRetriever([_target("deadlock decision")])
     targets = await extract_query(retriever, "deadlock", scope="devlog")
-    assert [t.text for t in targets] == ["deadlock decision"]
+    assert [t.origin for t in targets] == [""]
+    assert [t.item.text for t in targets] == ["deadlock decision"]
     assert retriever.calls[0]["owner_types"] == ["raw_source"]
 
 
