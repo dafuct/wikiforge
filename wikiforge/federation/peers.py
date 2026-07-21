@@ -57,8 +57,27 @@ class ReadOnlyDatabase:
         """Open ``<home>/wiki.db`` read-only with sqlite-vec loaded.
 
         ``as_uri()`` percent-encodes the path, so a home containing ``?`` or
-        ``#`` cannot corrupt the URI. Nothing is created and no pragma is set:
-        the peer's journal mode and schema are its own business.
+        ``#`` cannot corrupt the URI. Nothing is created and no pragma is set
+        by this call itself — the peer's journal mode and schema are its own
+        business. The first *read* through the returned connection is a
+        different story: every wikiforge wiki is created in WAL mode, and
+        SQLite's read-only mode still has to create ``-shm``/``-wal``
+        bookkeeping files to consult the peer's write-ahead log. That's what
+        lets a read here see the peer's freshly-captured, not-yet-checkpointed
+        events, which is the whole point of federation — but it means that
+        first read fails with ``sqlite3.OperationalError: attempt to write a
+        readonly database`` if the peer's directory isn't writable by this
+        process, a confusing message for what looks like a plain ``SELECT``.
+        ``immutable=1`` would sidestep that, but was tried and rejected: it
+        makes SQLite ignore the WAL file outright, so a lightly-used peer with
+        any uncheckpointed writes (the common case) would read back empty or
+        stale indefinitely — exactly the failure federation exists to avoid.
+        The non-writable-directory case is accepted instead, since it's rare
+        for this feature's target deployment (one user's own wikis on one
+        machine, normally all writable by that user), and it degrades
+        gracefully wherever this class is consumed: callers wrap peer reads in
+        a broad exception handler and treat a failure as "peer unreachable",
+        not a crash.
         """
         db_path = home.expanduser() / DB_FILENAME
         if not db_path.is_file():
