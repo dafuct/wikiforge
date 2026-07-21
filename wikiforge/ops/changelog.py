@@ -7,7 +7,7 @@ to a git range and renders it. Zero LLM unless the caller asks for prose.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -116,21 +116,35 @@ def _infer_base_ref(git: Callable[..., str]) -> str | None:
 
 @dataclass(frozen=True)
 class ChangelogEntry:
-    """One dev event in the range, plus which arm of the selection found it."""
+    """One dev event in the range, plus which arm of the selection found it.
+
+    ``origin`` is ``""`` for a locally-selected entry and a peer alias for one
+    merged in by federation (spec §7.4) — the render needs it to label a peer
+    line and the footer needs it to build ``Changelog.by_origin``.
+    """
 
     event: RawSource
     matched_by: Literal["files", "window"]
+    origin: str = ""
 
 
 @dataclass(frozen=True)
 class Changelog:
-    """Everything the render needs, including the numbers behind the coverage line."""
+    """Everything the render needs, including the numbers behind the coverage line.
+
+    ``by_origin`` counts ``entries`` per origin wiki; it is populated by the
+    federation merge in :func:`~wikiforge.services.run_changelog` (after
+    :func:`build_changelog` returns, which only ever sees this wiki's own
+    events), so the footer can attribute peer contributions without walking
+    every entry itself.
+    """
 
     rng: Range
     root: str
     entries: list[ChangelogEntry]
     files_with_history: int
     excluded: int
+    by_origin: dict[str, int] = field(default_factory=dict)
 
 
 async def build_changelog(
@@ -187,6 +201,36 @@ async def build_changelog(
     )
 
 
+async def select_peer_events(
+    repo: Repository,
+    rng: Range,
+    *,
+    root: str,
+    limit: int,
+    exclude_types: frozenset[str],
+) -> list[RawSource]:
+    """The same two-arm selection as :func:`build_changelog`, read-only.
+
+    Returns bare events, not a :class:`Changelog`: a peer has no opinion on
+    *this wiki's* coverage counters (``files_with_history``, ``excluded``) —
+    those describe how much of the caller's own range this wiki explains, and
+    a peer answering part of that range does not change the denominator.
+    ``exclude_types`` is still honoured, so a peer cannot surface a type the
+    caller asked to suppress.
+    """
+    found = await events_for_paths(repo, rng.paths, root=root, limit=limit, read_only=True)
+    seen = {event.id for event in found.events}
+    events = list(found.events)
+    for event in await repo.dev_events_fileless_in_window(rng.base_iso, rng.head_iso, limit=limit):
+        if event.id in seen:
+            continue
+        if event.provenance.get("repo", "") not in ("", root):
+            continue
+        seen.add(event.id)
+        events.append(event)
+    return [e for e in events if safe_event_type(e.provenance.get("type")) not in exclude_types]
+
+
 _TYPE_ORDER = (
     "feature", "bugfix", "refactor", "design", "spec", "research", "docs", "chore", "change",
 )
@@ -237,7 +281,8 @@ def format_changelog(log: Changelog) -> str:
     for kind in ordered:
         lines += ["", f"## {kind.capitalize()}"]
         for entry in by_type[kind]:
-            lines.append(f"- **{event_summary(entry.event)}**")
+            origin = f"  [{entry.origin}]" if entry.origin else ""
+            lines.append(f"- **{event_summary(entry.event)}**{origin}")
             files = _files_line(entry.event, log.root)
             if files:
                 lines.append(files)
@@ -246,8 +291,9 @@ def format_changelog(log: Changelog) -> str:
         lines += ["", "## Decisions without file changes"]
         for entry in fileless:
             kind = safe_event_type(entry.event.provenance.get("type"))
+            origin = f"  [{entry.origin}]" if entry.origin else ""
             lines.append(
-                f"- **{event_date(entry.event)} · {kind} · {event_summary(entry.event)}**"
+                f"- **{event_date(entry.event)} · {kind} · {event_summary(entry.event)}**{origin}"
             )
 
     by_file = sum(1 for entry in log.entries if entry.matched_by == "files")
@@ -258,6 +304,10 @@ def format_changelog(log: Changelog) -> str:
     )
     if log.excluded:
         footer += f" {log.excluded} entries hidden by --exclude-types."
+    peer_counts = {origin: n for origin, n in log.by_origin.items() if origin}
+    if peer_counts:
+        detail = ", ".join(f"{n} from {alias}" for alias, n in sorted(peer_counts.items()))
+        footer += f" Of these, {detail} (peer wiki contributions)."
     return "\n".join([*lines, "", "---", footer])
 
 

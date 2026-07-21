@@ -1335,6 +1335,15 @@ async def run_changelog(
     Zero LLM unless ``prose`` is set, in which case one cheap call rewrites the
     structured render. A prose failure degrades to the structured output rather
     than losing it.
+
+    Federated (cycle 4): after the local two-arm selection, every active peer
+    (``[federation] enabled`` plus the machine-global registry) runs the same
+    selection read-only via
+    :func:`~wikiforge.ops.changelog.select_peer_events` and contributes its
+    events, labelled with the peer's alias and re-sorted newest-first into the
+    merged list. A peer never touches ``files_with_history`` or ``excluded``:
+    those describe how much of *this wiki's* own range this wiki explains, and
+    a peer answering part of it does not change that denominator.
     """
     from wikiforge.activity.cost import CostTracker
     from wikiforge.ops import changelog as changelog_ops
@@ -1351,6 +1360,29 @@ async def run_changelog(
         log = await changelog_ops.build_changelog(
             repo, rng, root=root, limit=limit, exclude_types=exclude_types
         )
+
+        from collections import Counter
+        from dataclasses import replace
+
+        from wikiforge.federation.fanout import active_peers, fan_out
+
+        peer_sourced = await fan_out(
+            active_peers(cfg),
+            lambda peer_repo: changelog_ops.select_peer_events(
+                peer_repo, rng, root=root, limit=limit, exclude_types=exclude_types
+            ),
+            local=None,
+            dim=effective_embedding_dim(cfg),
+            timeout_ms=cfg.federation.peer_timeout_ms,
+        )
+        if peer_sourced:
+            merged = list(log.entries) + [
+                changelog_ops.ChangelogEntry(event=s.item, matched_by="files", origin=s.origin)
+                for s in peer_sourced
+            ]
+            merged.sort(key=lambda entry: entry.event.fetched_at, reverse=True)
+            log = replace(log, entries=merged, by_origin=dict(Counter(e.origin for e in merged)))
+
         rendered = changelog_ops.format_changelog(log)
         if not prose:
             return rendered
@@ -1378,6 +1410,12 @@ async def run_impact(
     "source", "file", or "topic" — checked here, at the shared service layer,
     so every caller (CLI and MCP alike) is protected even if a presentation
     layer forgets its own check.
+
+    Federated (cycle 4), file target only: every active peer contributes its
+    own decision history for the same path, read-only, merged in newest-first
+    and labelled with the peer's alias. Source and topic targets stay local —
+    merging citation or topic-graph data across wikis needs cross-wiki topic
+    identity, an explicit non-goal (spec §3).
     """
     from wikiforge.ops import impact as impact_ops
 
@@ -1399,9 +1437,30 @@ async def run_impact(
                 await impact_ops.build_source_impact(repo, source, limit=limit)
             )
         if kind == "file":
-            return impact_ops.format_impact(
-                await impact_ops.build_file_impact(repo, target, root=repo_root(), limit=limit)
+            from dataclasses import replace
+
+            from wikiforge.federation.fanout import active_peers, fan_out
+
+            report = await impact_ops.build_file_impact(repo, target, root=repo_root(), limit=limit)
+
+            async def _peer_file_events(peer_repo: Repository) -> list[RawSource]:
+                found = await events_for_paths(
+                    peer_repo, [target], root=repo_root(), limit=limit, read_only=True
+                )
+                return found.events
+
+            peer_sourced = await fan_out(
+                active_peers(cfg),
+                _peer_file_events,
+                local=None,
+                dim=effective_embedding_dim(cfg),
+                timeout_ms=cfg.federation.peer_timeout_ms,
             )
+            if peer_sourced:
+                merged = list(report.events) + list(peer_sourced)
+                merged.sort(key=lambda s: s.item.fetched_at, reverse=True)
+                report = replace(report, events=merged)
+            return impact_ops.format_impact(report)
         topic = await repo.get_topic(target)
         if topic is None:
             raise ValueError(
