@@ -287,6 +287,9 @@ async def compose_prose(llm: LLMProvider, cfg: Config, rendered: str) -> str:
     """
     tier = cfg.models.tasks.get("changelog", "cheap")
     result = await llm.complete(
-        "changelog", _PROSE_SYSTEM, seal_source_data(rendered), tier=tier
+        "changelog",
+        _PROSE_SYSTEM,
+        f"<source_data>{seal_source_data(rendered)}</source_data>",
+        tier=tier,
     )
     return result.text
