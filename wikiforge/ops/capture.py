@@ -94,18 +94,14 @@ _TYPE_RULES: list[tuple[str, re.Pattern[str]]] = [
             re.IGNORECASE,
         ),
     ),
-    # "feature" is intentionally LAST, not first: it is the broadest rule
-    # (implement/add/build/create/introduce) and would otherwise shadow the
-    # more specific rules above it — e.g. "add a plan for the next cycle" must
-    # classify as "spec" (via the "plan" keyword), not "feature" (via "add").
-    # First-match-wins ordering means specific rules must be checked first.
-    (
-        "feature",
-        re.compile(
-            r"\b(implement|add|build|create|introduce)\b|\bреалізуй|\bдодай|\bствори",
-            re.IGNORECASE,
-        ),
-    ),
+    # A "feature" rule (implement/add/build/create/introduce) used to sit here.
+    # Removed (Finding 5 of the whole-branch review): measured over the real
+    # corpus (48 edited turns from 60 transcripts) it decided 0 of them, while
+    # — being a broad text rule consulted before any file signal — it could
+    # only ever mask a stronger, more specific signal below. "feature" remains
+    # a legitimate event type (explicit `--type` override, LLM digest
+    # classification, `EVENT_TYPES`); it is simply no longer guessed from
+    # generic verbs in the request text.
 ]
 
 
@@ -271,6 +267,7 @@ async def capture_event(
     llm: LLMProvider | None,
     now: datetime,
     git_runner: GitRunner = default_git_runner,
+    git_meta: dict[str, str] | None = None,
     extra_provenance: dict[str, str] | None = None,
 ) -> RawSource | None:
     """Build, persist, FTS-index, and log one dev event; return the stored source.
@@ -278,6 +275,15 @@ async def capture_event(
     ``event_type=None`` lets the LLM classify; a non-None value is used verbatim.
     Any LLM failure (or ``[capture] summarize=false``) falls back to no summary and
     ``default_type``. Indexing is best-effort — the source is persisted even if it fails.
+    ``git_meta``, when given, is used verbatim instead of calling :func:`git_context`
+    here — a caller that loops over several turns per hook invocation (Stop,
+    SubagentStop, PreCompact) computes it ONCE and passes the same dict to every
+    ``capture_event`` call in that loop, instead of paying for four ``git rev-parse``
+    subprocesses per turn (Finding 3 of the whole-branch review: ~34 ms/event, so a
+    first Stop over a long unwatermarked transcript could spawn hundreds of
+    processes for values that never change within one invocation). When omitted,
+    behaviour is exactly as before — ``git_context(git_runner)`` is called here — so
+    ``run_capture_note`` and every existing caller/test keep working unchanged.
     ``extra_provenance`` lets a surface (e.g. SubagentStop's ``parent_session_id``)
     attach fields to the provenance dict without this function growing per-surface
     branches. Precedence is fixed: ``extra_provenance`` may only ADD fields, never
@@ -288,7 +294,7 @@ async def capture_event(
     if cfg.capture.redact:
         request = redact_secrets(request)
     diff_stat = git_diff_stat(files, runner=git_runner, max_lines=cfg.capture.max_diff_lines)
-    git_meta = git_context(git_runner)
+    resolved_git_meta = git_meta if git_meta is not None else git_context(git_runner)
 
     mode = cfg.capture.summarize
     summary = ""
@@ -325,7 +331,7 @@ async def capture_event(
             "ts": ts,
             "origin": origin,
             "label": cfg.capture.topic_label,
-            **git_meta,
+            **resolved_git_meta,
             **({"digest": "pending"} if digest_pending else {}),
         },
     )

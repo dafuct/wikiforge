@@ -8,7 +8,7 @@ from pathlib import Path
 
 from wikiforge.config.settings import load_config, write_default_config
 from wikiforge.ops.capture import capture_event
-from wikiforge.services import run_capture_subagent
+from wikiforge.services import _watermark_key, run_capture_subagent
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
 
@@ -128,7 +128,10 @@ async def test_subagent_captures_every_edited_turn_since_the_watermark(tmp_path:
         assert any("/r/b.py" in t for t in texts)
 
         repo = Repository(db)
-        assert await repo.get_watermark("sub-two") == "a2"  # advanced past both turns
+        # The mark is the last CONSUMED turn's own (user-entry) uuid, not the
+        # transcript's final entry (Finding 1 of the whole-branch review) —
+        # "u2" (turn 2's request), not "a2" (turn 2's trailing edit entry).
+        assert await repo.get_watermark(_watermark_key("sub-two", "subagent")) == "u2"
     finally:
         await db.close()
 
