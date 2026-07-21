@@ -103,7 +103,7 @@ def test_rm_removes_by_alias(tmp_path: Path, registry: Path) -> None:
     local = tmp_path / "local"
     asyncio.run(init_wiki("local", local))
     runner.invoke(app, ["peers", "add", str(peer), "--home", str(local)])
-    result = runner.invoke(app, ["peers", "rm", "peer", "--home", str(local)])
+    result = runner.invoke(app, ["peers", "rm", "peer"])
     assert result.exit_code == 0
     assert load_registry(registry) == []
 

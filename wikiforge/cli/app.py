@@ -691,7 +691,6 @@ def peers_add(
 @peers_app.command("rm")
 def peers_rm(
     alias: str = typer.Argument(..., help="Alias to remove."),
-    home: str | None = HomeOption,
 ) -> None:
     """Remove a peer from the registry (the per-peer off switch)."""
     from wikiforge.services import run_peers_rm
