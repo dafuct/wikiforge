@@ -41,8 +41,10 @@ The plugin wires six Claude Code hooks (all fail-safe — they never break a ses
   dev-log vectors (free) and drains up to `[capture] auto_digest_batches` pending digests (default 1
   cheap call); runs `wiki consolidate --if-auto` (a no-op unless `[consolidate] auto = true`); and
   starts the read-only Viewer UI (macOS/Linux).
-- **`Stop`** — `wiki capture --hook`: records a dev event (your request, changed files, git diff stat)
-  after any file-editing task. Zero LLM at capture time.
+- **`Stop`** — `wiki capture --hook`: records a dev event (your request, changed files, git diff stat,
+  and the git repository it happened in) after any file-editing task. Zero LLM at capture time. That
+  repository tag is what keeps `/wikiforge:changelog` and `/wikiforge:impact` scoped to one project's
+  history in a wiki shared across several.
 - **`SubagentStop`** — `wiki capture --subagent`: records what a subagent changed. Subagents run with
   their own transcript, so without this their work never reaches the dev log. Off with
   `[capture] subagents = false`. *Assumption, not yet observed on a real payload:* this keys its
@@ -81,6 +83,8 @@ The plugin wires six Claude Code hooks (all fail-safe — they never break a ses
 | `/wikiforge:thesis <claim>` | Evaluate a claim with FOR/AGAINST agents → cited verdict | LLM (heavy) |
 | `/wikiforge:lint [--fix]` | Audit broken links, orphans, missing citations, staleness | — |
 | `/wikiforge:audit <topic>` | Re-verify citation quotes against immutable sources | — |
+| `/wikiforge:changelog [range]` | Why-annotated changelog / PR body for a git range | — / light |
+| `/wikiforge:impact <target>` | What rests on a source, file, or topic — the blast radius | — |
 | `/wikiforge:refresh [--run]` | List (or `--run` re-research) stale topics | — / LLM |
 | `/wikiforge:collect <collection> <url\|path>` | Catalogue a source into a named collection | light |
 | `/wikiforge:dataset <name> <path>` | Track an on-disk dataset | — |
