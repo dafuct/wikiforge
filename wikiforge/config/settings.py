@@ -200,6 +200,37 @@ class RecallConfig(BaseModel):
     annotate: bool = True
 
 
+class FederationConfig(BaseModel):
+    """Cross-wiki read settings. The peer list itself is machine-global (see
+    ``wikiforge.federation.registry``) — only the decision to *read* peers, and
+    how long to wait for one, belongs to a single wiki."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    peer_timeout_ms: int = 500
+
+
+class MaintainConfig(BaseModel):
+    """Budget and job list for ``wiki maintain``.
+
+    The caps bound *automatic* spending only: every call the governor makes is
+    tagged ``maintain:`` and counted, and interactive commands are untouched.
+    ``jobs`` is ordered — free jobs first — and unknown names are ignored, so a
+    config written for a later version still runs on an older one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    window_hours: int = 24
+    max_calls_24h: int = 8
+    max_usd_24h: float = 0.50
+    jobs: list[str] = Field(
+        default_factory=lambda: ["vectors", "paths", "peers", "digests", "consolidate"]
+    )
+
+
 class Config(BaseModel):
     """The fully parsed ``config.toml``."""
 
@@ -219,6 +250,8 @@ class Config(BaseModel):
     recall: RecallConfig = RecallConfig()
     consolidate: ConsolidateConfig = ConsolidateConfig()
     why: WhyConfig = WhyConfig()
+    federation: FederationConfig = FederationConfig()
+    maintain: MaintainConfig = MaintainConfig()
 
     def model_for_task(self, task: str, tier: str | None = None) -> str:
         """Resolve a task (and optional explicit tier override) to a model ID.
