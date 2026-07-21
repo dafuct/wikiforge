@@ -13,6 +13,7 @@ only what changelog, impact and why all three need.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,8 +64,35 @@ class PathEvents:
     fell_back: bool
 
 
+async def _prepare(repo: Repository, *, read_only: bool) -> None:
+    """Ensure the file index locally; on a peer, leave the database untouched.
+
+    A peer that predates the index simply has nothing to contribute (rss and
+    nimbus are in exactly that state today) — and building it there would be a
+    cross-wiki write, which the design forbids outright.
+    """
+    if not read_only:
+        await repo.ensure_dev_event_files()
+
+
+async def events_for_absolute(
+    repo: Repository, path: str, *, limit: int, read_only: bool = False
+) -> list[RawSource]:
+    """Dev events for an absolute path; ``[]`` when this wiki has no file index."""
+    await _prepare(repo, read_only=read_only)
+    try:
+        return await repo.dev_events_for_path(path, limit=limit)
+    except sqlite3.OperationalError:
+        return []
+
+
 async def events_for_paths(
-    repo: Repository, relpaths: list[str], *, root: str, limit: int
+    repo: Repository,
+    relpaths: list[str],
+    *,
+    root: str,
+    limit: int,
+    read_only: bool = False,
 ) -> PathEvents:
     """Dev events touching any of ``relpaths``, newest first, deduped by id.
 
@@ -83,33 +111,39 @@ async def events_for_paths(
     ``fell_back`` is True only when a repo root was known, anchoring found
     nothing, and the fallback found something — an empty result is not a
     cross-project answer, and outside a repo there is nothing to fall back from.
+
+    ``read_only`` is for peer wikis: the index is not ensured and a wiki that
+    lacks ``dev_event_files`` yields an empty result rather than an error.
     """
     if not relpaths:
         return PathEvents(events=[], matched=set(), fell_back=False)
-    await repo.ensure_dev_event_files()
+    await _prepare(repo, read_only=read_only)
 
-    if root:
-        anchored = anchor_paths(root, relpaths)
-        back = dict(zip(anchored, relpaths, strict=True))
-        events = await repo.dev_events_for_paths(anchored, limit=limit)
-        if events:
-            matched_abs = await repo.matched_dev_event_paths(anchored)
-            return PathEvents(
-                events=events,
-                matched={back.get(p, p) for p in matched_abs},
-                fell_back=False,
-            )
+    try:
+        if root:
+            anchored = anchor_paths(root, relpaths)
+            back = dict(zip(anchored, relpaths, strict=True))
+            events = await repo.dev_events_for_paths(anchored, limit=limit)
+            if events:
+                matched_abs = await repo.matched_dev_event_paths(anchored)
+                return PathEvents(
+                    events=events,
+                    matched={back.get(p, p) for p in matched_abs},
+                    fell_back=False,
+                )
 
-    seen: set[int] = set()
-    found: list[RawSource] = []
-    matched: set[str] = set()
-    for rel in relpaths:
-        for event in await repo.dev_events_for_path(rel, limit=limit):
-            matched.add(rel)
-            if event.id is not None and event.id not in seen:
-                seen.add(event.id)
-                found.append(event)
-    found.sort(key=lambda e: e.id or 0, reverse=True)
-    return PathEvents(
-        events=found[:limit], matched=matched, fell_back=bool(root) and bool(found)
-    )
+        seen: set[int] = set()
+        found: list[RawSource] = []
+        matched: set[str] = set()
+        for rel in relpaths:
+            for event in await repo.dev_events_for_path(rel, limit=limit):
+                matched.add(rel)
+                if event.id is not None and event.id not in seen:
+                    seen.add(event.id)
+                    found.append(event)
+        found.sort(key=lambda e: e.id or 0, reverse=True)
+        return PathEvents(
+            events=found[:limit], matched=matched, fell_back=bool(root) and bool(found)
+        )
+    except sqlite3.OperationalError:
+        return PathEvents(events=[], matched=set(), fell_back=False)
