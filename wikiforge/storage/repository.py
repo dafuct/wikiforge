@@ -970,7 +970,7 @@ class Repository:
     async def log_recall(
         self, session_id: str, entries: Sequence[tuple[str, ChunkTarget]], ts_iso: str
     ) -> None:
-        """Record the (origin, chunk) pairs injected into a session."""
+        """Record the (origin, chunk) pairs injected into a session, so they aren't reinjected."""
         async with self._db.lock:
             for origin, t in entries:
                 await self._q.insert_recall_log(
