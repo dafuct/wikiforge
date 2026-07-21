@@ -344,7 +344,7 @@ Run on the four real wikis; report the numbers that come out, including the disa
 
 ## 14. Risks
 
-- **`vec0` KNN may not run read-only.** Probe-gated in the plan's first task (§5.3); the FTS-only fallback loses breadth but never produces a wrong score. This is the one unknown that could reshape a feature, so it is settled before implementation, not during.
+- **`vec0` KNN read-only — RESOLVED (2026-07-21).** Probed in the plan's first task: does run over a `mode=ro` connection with the installed sqlite-vec. See §5.3.
 - **Vector federation is inert on this machine until a reindex.** Stated in §5.2 and measured in §13.4 rather than discovered later. SQL federation delivers immediately, which is why the surfaces were chosen to include it.
 - **Peer noise in recall.** Bounded by construction: the same 0.80 gate, and the excerpt cap applied after the merge (§7.1). Federation can change which memories arrive but cannot flood the context.
 - **Overshoot by one LLM call.** Inherent to post-hoc costing; bounded, documented, cheap-tier.
