@@ -73,6 +73,10 @@ CREATE TABLE IF NOT EXISTS capture_watermark (
     ts TEXT NOT NULL
 );"""
 
+CITATION_INDEXES_DDL = """\
+CREATE INDEX IF NOT EXISTS idx_citations_raw_source ON citations(raw_source_id);
+CREATE INDEX IF NOT EXISTS idx_citations_article ON citations(article_id);"""
+
 
 @dataclass
 class CitationSource:
@@ -82,6 +86,18 @@ class CitationSource:
     quote: str | None
     raw_source_id: int
     source_text: str
+
+
+@dataclass
+class SourceClaim:
+    """A citation seen from the source's side: which claim, in which article."""
+
+    claim: str
+    quote: str | None
+    article_id: int
+    article_title: str
+    topic_id: int
+    topic_slug: str
 
 
 def _like_escape(value: str) -> str:
@@ -1178,3 +1194,52 @@ class Repository:
         async with self._db.lock:
             await self._q.set_topic_status(self._db.conn, slug=slug, status=str(status))
             await self._db.conn.commit()
+
+    async def ensure_citation_indexes(self) -> None:
+        """Create the reverse-citation indexes if missing (pre-upgrade wikis lack them).
+
+        Idempotent and backfill-free: an index is derived data, so unlike
+        dev_event_files there is nothing to populate.
+        """
+        async with self._db.lock:
+            await self._db.conn.executescript(CITATION_INDEXES_DDL)
+            await self._db.conn.commit()
+
+    async def get_raw_source_by_id(self, source_id: int) -> RawSource | None:
+        """Return one raw source by primary key, or None."""
+        row = await self._q.get_raw_source_by_id(self._db.conn, source_id=source_id)
+        return _raw_source_from_row(row) if row is not None else None
+
+    async def get_raw_source_by_url(self, canonical_url: str) -> RawSource | None:
+        """Return the newest raw source with this canonical URL, or None."""
+        row = await self._q.get_raw_source_by_url(self._db.conn, canonical_url=canonical_url)
+        return _raw_source_from_row(row) if row is not None else None
+
+    async def citations_for_source(
+        self, raw_source_id: int, *, limit: int
+    ) -> list[SourceClaim]:
+        """Claims (in any article version) that cite this source, newest first."""
+        return [
+            SourceClaim(
+                claim=row["claim"],
+                quote=row["quote"],
+                article_id=int(row["article_id"]),
+                article_title=row["article_title"],
+                topic_id=int(row["topic_id"]),
+                topic_slug=row["topic_slug"],
+            )
+            async for row in self._q.citations_for_source(
+                self._db.conn, raw_source_id=raw_source_id, limit=limit
+            )
+        ]
+
+    async def findings_for_source(
+        self, raw_source_id: int, *, limit: int
+    ) -> list[tuple[str, str]]:
+        """(persona, summary) for research findings that cite this source."""
+        return [
+            (row["persona"], row["summary"])
+            async for row in self._q.findings_for_source(
+                self._db.conn, raw_source_id=raw_source_id, limit=limit
+            )
+        ]
