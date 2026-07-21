@@ -66,11 +66,13 @@ async def test_missing_file_index_is_reported(tmp_path: Path) -> None:
     await init_wiki("peer", home)
     db = await Database.open(home, dim=384)
     try:
+        await Repository(db).set_meta("embedding_model", "e5")  # isolate: compat is "ok" here
         await db.conn.execute("DROP TABLE IF EXISTS dev_event_files")
         await db.conn.commit()
     finally:
         await db.close()
     status = await peer_status(PeerRef("peer", home), local_model="e5", dim=384)
+    assert status.compat == "ok"
     assert status.has_file_index is False
     hint = fix_hint(status) or ""
     assert "wiki maintain" in hint
