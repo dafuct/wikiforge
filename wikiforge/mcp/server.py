@@ -78,7 +78,7 @@ def build_server(home: Path) -> FastMCP:
         # limit is agent-controlled and otherwise unclamped (e.g. -1 would make
         # SQLite return every matching event via `LIMIT -1`).
         clamped_limit = max(1, min(limit, 50))
-        events = await run_why(home, path, limit=clamped_limit)
+        events, _ = await run_why(home, path, limit=clamped_limit)
         return {
             "note": RECALL_HEADER,
             "path": path,
