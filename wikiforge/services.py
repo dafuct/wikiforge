@@ -23,6 +23,8 @@ from wikiforge.config.settings import (
 )
 from wikiforge.embed.factory import build_embedding_provider, effective_embedding_dim
 from wikiforge.embed.provider import EmbeddingProvider
+from wikiforge.federation.peers import PeerStatus
+from wikiforge.federation.registry import PeerRef
 from wikiforge.ingest import sources as ingest_sources
 from wikiforge.lint.auditor import WikiAuditor
 from wikiforge.lint.linter import LintFinding, WikiLinter
@@ -1080,6 +1082,91 @@ async def run_why_hook(home: Path, hook_stdin: str) -> str:
         return warning
     finally:
         await db.close()
+
+
+async def run_peers_add(home: Path, target: str, *, alias: str | None) -> PeerRef:
+    """Register ``target`` as a peer of the machine-global registry.
+
+    Validates before writing so the registry never holds an entry that cannot
+    be opened: the path must be a wiki, must not be this wiki, and must not
+    already be registered under any alias. Both paths are resolved before
+    comparison so a trailing slash or ``..`` segment cannot disguise the local
+    wiki as a distinct peer (spec §4.3 forbids self-federation, which would
+    double every fan-out result).
+    """
+    from wikiforge.federation.registry import load_registry, save_registry, slugify_alias
+    from wikiforge.storage.db import DB_FILENAME
+
+    peer_home = Path(target).expanduser().resolve()
+    if not (peer_home / CONFIG_FILENAME).exists() or not (peer_home / DB_FILENAME).exists():
+        raise ValueError(f"{peer_home} is not a wiki (needs config.toml and wiki.db)")
+    if peer_home == home.expanduser().resolve():
+        raise ValueError("a wiki cannot be a peer of itself")
+
+    peers = load_registry()
+    if any(p.home.expanduser().resolve() == peer_home for p in peers):
+        raise ValueError(f"{peer_home} is already registered")
+
+    chosen = alias or slugify_alias(load_config(peer_home).wiki_name)
+    taken = {p.alias for p in peers}
+    if chosen in taken:
+        if alias is not None:
+            raise ValueError(f"alias {chosen!r} is already registered")
+        # Only an auto-derived alias may collide silently (two wikis happen to
+        # share a wiki_name) — an explicit --alias collision is the user's
+        # mistake and must be rejected above, not renamed out from under them.
+        suffix = 2
+        while f"{chosen}-{suffix}" in taken:
+            suffix += 1
+        chosen = f"{chosen}-{suffix}"
+
+    ref = PeerRef(alias=chosen, home=peer_home)
+    save_registry([*peers, ref])
+    return ref
+
+
+async def run_peers_rm(alias: str) -> bool:
+    """Remove one peer from the registry by alias.
+
+    Takes no ``home``: the registry is machine-global rather than per-project,
+    so removing a peer never depends on which wiki the caller is standing in.
+    Returns False instead of raising when the alias isn't registered, so the
+    CLI can report a plain "no such peer" error rather than an exception.
+    """
+    from wikiforge.federation.registry import load_registry, save_registry
+
+    peers = load_registry()
+    kept = [p for p in peers if p.alias != alias]
+    if len(kept) == len(peers):
+        return False
+    save_registry(kept)
+    return True
+
+
+async def run_peers_list(home: Path) -> tuple[list[PeerStatus], str | None]:
+    """Probe every registered peer's reachability and embedding compatibility.
+
+    Opens the *local* wiki only to resolve which embedding model this process
+    would currently use — read from live config, not stamped meta, since the
+    question is "would a peer fuse cleanly right now", not history — then
+    probes each peer against it via :func:`~wikiforge.federation.peers.peer_status`,
+    which never raises. A malformed ``peers.toml`` is returned as an error
+    string rather than raised, so one bad line degrades `wiki peers list` to a
+    warning instead of taking the whole command down.
+    """
+    from wikiforge.federation.peers import peer_status
+    from wikiforge.federation.registry import load_registry_report
+
+    cfg = load_config(home)
+    dim = effective_embedding_dim(cfg)
+    db = await Database.open(home, dim=dim)
+    try:
+        embedder = build_embedding_provider(cfg, Repository(db))
+        local_model = embedder.model
+    finally:
+        await db.close()
+    peers, error = load_registry_report()
+    return [await peer_status(p, local_model=local_model, dim=dim) for p in peers], error
 
 
 async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
