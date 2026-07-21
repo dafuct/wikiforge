@@ -187,17 +187,21 @@ def fix_hint(status: PeerStatus) -> str | None:
     """The one-line command that would make this peer contribute more.
 
     Both hints name a command the *user* runs, in that project — repairing a
-    peer from here would be a cross-wiki write, which the design forbids. The
-    file-index check runs before the compat check: an unstamped
-    ``embedding_model`` is the common case on this machine (every project
-    wiki, today), so ranking compat first would bury the rarer, differently-
-    fixed "no file index" finding behind a near-universal one and a user
-    would never see it without fixing compat first and re-running.
+    peer from here would be a cross-wiki write, which the design forbids.
+    Checked in this order because it's the more durable priority: compat gates
+    the entire vector-search path (a wholesale capability loss) and never
+    self-heals without an explicit `reindex`, while a missing file index only
+    narrows `wiki why` and typically self-heals on its own through ordinary
+    use of the peer project (`ensure_dev_event_files()` runs from the
+    PreToolUse guardrail on nearly every file edit there). Today most peers on
+    this machine are unknown-compat — a one-time migration-rollout snapshot,
+    not a reason to make the less-severe, more self-healing problem the
+    default priority.
     """
     if not status.reachable:
         return f"unreachable: {status.error or 'unknown reason'}"
-    if not status.has_file_index:
-        return f"no file index — run: wiki maintain --home {status.peer.home}"
     if status.compat != "ok":
         return f"vector paths skipped — run: wiki reindex --embeddings --home {status.peer.home}"
+    if not status.has_file_index:
+        return f"no file index — run: wiki maintain --home {status.peer.home}"
     return None
