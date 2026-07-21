@@ -135,6 +135,11 @@ def read_transcript(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+def _str_or_none(value: object) -> str | None:
+    """Return ``value`` only when it is a non-empty string."""
+    return value if isinstance(value, str) and value else None
+
+
 def iter_turns(entries: list[dict[str, Any]]) -> list[Turn]:
     """Split a transcript into turns, one per genuine human request."""
     turns: list[Turn] = []
@@ -147,7 +152,10 @@ def iter_turns(entries: list[dict[str, Any]]) -> list[Turn]:
             turns.append(
                 Turn(
                     request=strip_envelopes(_text_of(content)),
-                    uuid=entry.get("uuid"),
+                    # Type-checked like last_entry_uuid: a non-string uuid would be
+                    # truthy, get stored as a watermark, then never compare equal on
+                    # read — leaving that surface re-capturing the same turns forever.
+                    uuid=_str_or_none(entry.get("uuid")),
                     ts=entry.get("timestamp"),
                 )
             )

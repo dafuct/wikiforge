@@ -244,3 +244,21 @@ def test_turn_backwards_compatible_construction() -> None:
     """capture.py and existing tests build Turn with two positional-style kwargs."""
     t = Turn(request="r", files=["/f.py"])
     assert t.assistant_text == "" and t.uuid is None and t.ts is None
+
+
+def test_turn_uuid_is_type_checked() -> None:
+    """A non-string uuid must not become a watermark.
+
+    It would be truthy, get stored, then never compare equal on read — leaving
+    the surface that stored it re-capturing the same turns forever.
+    """
+    entries = [
+        {"uuid": 12345, "message": {"role": "user",
+                                    "content": [{"type": "text", "text": "do the thing"}]}},
+    ]
+    assert iter_turns(entries)[0].uuid is None
+    good = [
+        {"uuid": "u1", "message": {"role": "user",
+                                   "content": [{"type": "text", "text": "do the thing"}]}},
+    ]
+    assert iter_turns(good)[0].uuid == "u1"
