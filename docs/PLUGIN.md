@@ -44,8 +44,13 @@ The plugin wires six Claude Code hooks (all fail-safe — they never break a ses
 - **`Stop`** — `wiki capture --hook`: records a dev event (your request, changed files, git diff stat)
   after any file-editing task. Zero LLM at capture time.
 - **`SubagentStop`** — `wiki capture --subagent`: records what a subagent changed. Subagents run with
-  their own transcript, so without this their work never reaches the dev log. Keyed by the subagent's
-  own session id, so it can't double-capture with `Stop`. Off with `[capture] subagents = false`.
+  their own transcript, so without this their work never reaches the dev log. Off with
+  `[capture] subagents = false`. *Assumption, not yet observed on a real payload:* this keys its
+  watermark on whatever `session_id` the payload carries, assuming that is the subagent's own. The
+  `SubagentStop` payload schema is undocumented ([#19170](https://github.com/anthropics/claude-code/issues/19170)),
+  so if Claude Code sends the parent's id instead, `Stop` and `SubagentStop` would share a watermark
+  across two different transcripts. Each surface keys its own watermark slot, which contains the blast
+  radius, but this is worth confirming against a real delegating session.
 - **`PreCompact`** — `wiki capture --precompact`: fires before a context compaction, while the
   pre-compaction transcript still exists, and sweeps up the turns that edited no file — the design
   discussion, the investigation, the rejected alternative. Those are exactly what compaction discards
