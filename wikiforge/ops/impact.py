@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from wikiforge.lint.auditor import quote_drifted
+from wikiforge.lint.auditor import AuditFinding, quote_drifted
 from wikiforge.models.domain import RawSource, Topic
 from wikiforge.ops.scope import anchor_paths, events_for_paths
 from wikiforge.ops.why import event_date, event_summary, safe_event_type
@@ -263,3 +263,16 @@ def _format_topic(report: TopicImpact) -> str:
         if others:
             lines.append(f"    also carries: {', '.join(others)}")
     return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class AuditResult:
+    """Citation-drift findings plus the blast radius of each drifted source.
+
+    Lives here rather than in lint.auditor because it composes an auditor
+    finding with an impact report, and impact already depends on the auditor
+    (for quote_drifted) — never the reverse.
+    """
+
+    findings: list[AuditFinding]
+    impacts: list[SourceImpact]
