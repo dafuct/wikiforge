@@ -69,6 +69,16 @@ def test_cap_is_applied_after_the_merge() -> None:
     assert [s.item.text for s in kept] == ["p1", "l1"]
 
 
+def test_zero_max_excerpts_admits_nothing() -> None:
+    """A user can legally set [recall] max_excerpts = 0 to disable injection
+    while keeping other recall behavior (e.g. routing_hint) active — the cap
+    must be checked before admitting a candidate, not after."""
+    from wikiforge.ops.recall import cap_and_dedup
+
+    scored = [(0.9, Sourced("", _target(1, text="a")))]
+    assert cap_and_dedup(scored, seen=set(), max_excerpts=0) == []
+
+
 def test_dedup_is_origin_aware() -> None:
     """A peer chunk whose ids collide with an already-seen local one survives."""
     from wikiforge.ops.recall import cap_and_dedup
