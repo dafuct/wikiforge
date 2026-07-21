@@ -18,6 +18,8 @@ app = typer.Typer(
 )
 dataset_app = typer.Typer(name="dataset", help="Manage tracked datasets.", no_args_is_help=True)
 app.add_typer(dataset_app, name="dataset")
+peers_app = typer.Typer(name="peers", help="Manage federated peer wikis.", no_args_is_help=True)
+app.add_typer(peers_app, name="peers")
 
 HomeOption = typer.Option(None, "--home", help="Wiki home directory (default: ~/wiki).")
 
@@ -666,6 +668,62 @@ def why(
             "showing matches from other projects."
         )
     typer.echo(format_events(clean_path, events))
+
+
+@peers_app.command("add")
+def peers_add(
+    path: str = typer.Argument(..., help="Home directory of the wiki to federate."),
+    alias: str | None = typer.Option(None, "--alias", help="Short name (default: its wiki_name)."),
+    home: str | None = HomeOption,
+) -> None:
+    """Register another wiki as a read-only peer of this one."""
+    from wikiforge.paths import resolve_capture_home
+    from wikiforge.services import run_peers_add
+
+    try:
+        ref = asyncio.run(run_peers_add(resolve_capture_home(home), path, alias=alias))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"Registered peer {ref.alias!r} → {ref.home}")
+
+
+@peers_app.command("rm")
+def peers_rm(
+    alias: str = typer.Argument(..., help="Alias to remove."),
+    home: str | None = HomeOption,
+) -> None:
+    """Remove a peer from the registry (the per-peer off switch)."""
+    from wikiforge.services import run_peers_rm
+
+    if not asyncio.run(run_peers_rm(alias)):
+        typer.echo(f"Error: no peer named {alias!r}", err=True)
+        raise typer.Exit(code=2)
+    typer.echo(f"Removed peer {alias!r}")
+
+
+@peers_app.command("list")
+def peers_list(home: str | None = HomeOption) -> None:
+    """Show each peer's reachability, embedding model and what it can contribute."""
+    from wikiforge.federation.peers import fix_hint
+    from wikiforge.federation.registry import registry_path
+    from wikiforge.paths import resolve_capture_home
+    from wikiforge.services import run_peers_list
+
+    statuses, error = asyncio.run(run_peers_list(resolve_capture_home(home)))
+    if error:
+        typer.echo(f"warning: {error}", err=True)
+    if not statuses:
+        typer.echo(f"No peers registered ({registry_path()}).")
+        typer.echo("Add one with: wiki peers add <wiki-home>")
+        return
+    for status in statuses:
+        model = status.model or "unstamped"
+        typer.echo(f"{status.peer.alias}  {status.peer.home}")
+        typer.echo(f"    model: {model}    compatibility: {status.compat}")
+        hint = fix_hint(status)
+        if hint:
+            typer.echo(f"    {hint}")
 
 
 @app.command()
