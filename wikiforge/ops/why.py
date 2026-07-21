@@ -69,7 +69,8 @@ def event_summary(event: RawSource) -> str:
     return _one_line(event.title)
 
 
-def _event_date(event: RawSource) -> str:
+def event_date(event: RawSource) -> str:
+    """The event's calendar date (YYYY-MM-DD), from provenance ts or fetched_at."""
     ts = event.provenance.get("ts") or event.fetched_at.isoformat()
     return ts[:10]
 
@@ -83,7 +84,7 @@ def format_events(path: str, events: list[RawSource]) -> str:
         branch = event.provenance.get("branch")
         where = f" ({branch})" if branch else ""
         kind = safe_event_type(event.provenance.get("type"))
-        lines.append(f"  {_event_date(event)} · {kind}{where} · {event_summary(event)}{suffix}")
+        lines.append(f"  {event_date(event)} · {kind}{where} · {event_summary(event)}{suffix}")
     return "\n".join(lines)
 
 
@@ -123,7 +124,7 @@ def render_warning(events: list[RawSource], *, max_events: int) -> str:
     lines = [WHY_HEADER]
     for event in events[:max_events]:
         kind = safe_event_type(event.provenance.get("type"))
-        body = f"{_event_date(event)} · {kind} · {event_summary(event)}"
+        body = f"{event_date(event)} · {kind} · {event_summary(event)}"
         sealed = seal_source_data(body)
         lines.append(f"<source_data id='raw_source:{event.id}'>{sealed}</source_data>")
     if len(lines) == 1:  # Only header, no events
