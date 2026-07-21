@@ -143,8 +143,8 @@ class _DedupRepo(_VecRepo):
     async def recall_seen(self, session_id):
         return set(self.seen)
 
-    async def log_recall(self, session_id, targets, ts_iso):
-        self.logged += [(t.owner_type, t.owner_id, t.seq) for t in targets]
+    async def log_recall(self, session_id, entries, ts_iso):
+        self.logged += [(t.owner_type, t.owner_id, t.seq) for _, t in entries]
 
     async def purge_recall_log(self, cutoff_iso):
         self.purged.append(cutoff_iso)
@@ -154,7 +154,7 @@ async def test_recall_dedups_within_session_and_logs_injections() -> None:
     targets = [_target("we hit a deadlock in the bridge", 1),
                _target("deadlock retry strategy chosen", 2, seq=1)]
     repo = _DedupRepo({1: [1.0, 0.0, 0.0, 0.0], 2: [1.0, 0.0, 0.0, 0.0]},
-                      seen={("raw_source", 5, 0)})          # first chunk already injected
+                      seen={("", "raw_source", 5, 0)})      # first chunk already injected
     out = await recall_excerpts(repo, _StubRetriever(targets), _CountingEmbedder(), _Cfg(),
                                 "why the deadlock in the bridge?", session_id="s1")
     assert "retry strategy" in out
@@ -194,7 +194,7 @@ async def test_recall_seen_chunk_does_not_consume_a_slot() -> None:
             3: [0.98, 0.199, 0.0, 0.0],   # unseen_2
             4: [0.97, 0.243, 0.0, 0.0],   # unseen_3, lowest unseen
         },
-        seen={("raw_source", 5, 0)}  # mark target 1 (seq=0) as already seen
+        seen={("", "raw_source", 5, 0)}  # mark target 1 (seq=0) as already seen
     )
     out = await recall_excerpts(repo, _StubRetriever(targets), _CountingEmbedder(), _Cfg3(),
                                 "why the deadlock in the bridge?", session_id="s1")

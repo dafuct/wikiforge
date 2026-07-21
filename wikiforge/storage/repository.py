@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import struct
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -76,6 +77,17 @@ CREATE TABLE IF NOT EXISTS capture_watermark (
 CITATION_INDEXES_DDL = """\
 CREATE INDEX IF NOT EXISTS idx_citations_raw_source ON citations(raw_source_id);
 CREATE INDEX IF NOT EXISTS idx_citations_article ON citations(article_id);"""
+
+RECALL_LOG_DDL = """\
+CREATE TABLE IF NOT EXISTS recall_log (
+    session_id TEXT NOT NULL,
+    origin     TEXT NOT NULL DEFAULT '',
+    owner_type TEXT NOT NULL,
+    owner_id   INTEGER NOT NULL,
+    seq        INTEGER NOT NULL,
+    ts         TEXT NOT NULL,
+    PRIMARY KEY (session_id, origin, owner_type, owner_id, seq)
+);"""
 
 
 @dataclass
@@ -931,30 +943,44 @@ class Repository:
         return bool(row["n"]) if row is not None else False
 
     async def ensure_recall_log(self) -> None:
-        """Create the recall_log table if missing (wikis initialized pre-upgrade lack it)."""
-        await self._db.execute(
-            "CREATE TABLE IF NOT EXISTS recall_log ("
-            " session_id TEXT NOT NULL, owner_type TEXT NOT NULL, owner_id INTEGER NOT NULL,"
-            " seq INTEGER NOT NULL, ts TEXT NOT NULL,"
-            " PRIMARY KEY (session_id, owner_type, owner_id, seq))"
-        )
+        """Create recall_log, rebuilding a pre-origin table if one is found.
 
-    async def recall_seen(self, session_id: str) -> set[tuple[str, int, int]]:
-        """Return the (owner_type, owner_id, seq) chunks already injected this session."""
+        A primary key cannot be altered in place, and this table is a 7-day
+        dedup cache: dropping and recreating costs at most one duplicated
+        excerpt in a session already in flight, which is cheaper and far more
+        predictable than a copy migration.
+        """
+        rows = await self._db.fetchall("SELECT name FROM pragma_table_info('recall_log')")
+        columns = {str(row["name"]) for row in rows}
+        if columns and "origin" not in columns:
+            await self._db.execute("DROP TABLE recall_log")
+        await self._db.execute(RECALL_LOG_DDL)
+
+    async def recall_seen(self, session_id: str) -> set[tuple[str, str, int, int]]:
+        """The (origin, owner_type, owner_id, seq) chunks already injected this session.
+
+        Origin is part of the identity: ids are per-database, so a peer's
+        ``article:7#2`` and the local ``article:7#2`` are different chunks.
+        """
         return {
-            (str(r["owner_type"]), int(r["owner_id"]), int(r["seq"]))
+            (str(r["origin"]), str(r["owner_type"]), int(r["owner_id"]), int(r["seq"]))
             async for r in self._q.recall_log_seen(self._db.conn, session_id=session_id)
         }
 
     async def log_recall(
-        self, session_id: str, targets: list[ChunkTarget], ts_iso: str
+        self, session_id: str, entries: Sequence[tuple[str, ChunkTarget]], ts_iso: str
     ) -> None:
-        """Record the chunks injected into a session, so they are not repeated."""
+        """Record the (origin, chunk) pairs injected into a session."""
         async with self._db.lock:
-            for t in targets:
+            for origin, t in entries:
                 await self._q.insert_recall_log(
-                    self._db.conn, session_id=session_id, owner_type=t.owner_type,
-                    owner_id=t.owner_id, seq=t.seq, ts=ts_iso,
+                    self._db.conn,
+                    session_id=session_id,
+                    origin=origin,
+                    owner_type=t.owner_type,
+                    owner_id=t.owner_id,
+                    seq=t.seq,
+                    ts=ts_iso,
                 )
             await self._db.conn.commit()
 
