@@ -683,6 +683,38 @@ def consolidate(
         raise typer.Exit(code=1) from None
 
 
+@app.command()
+def changelog(
+    range_spec: str | None = typer.Argument(
+        None, help="Git range (A..B, A...B, or a single ref). Default: upstream/main..HEAD."
+    ),
+    home: str | None = HomeOption,
+    limit: int = typer.Option(50, "--limit", help="Max dev events to include."),
+    exclude_types: str = typer.Option(
+        "", "--exclude-types", help="Comma-separated event types to hide, e.g. chore,docs."
+    ),
+    prose: bool = typer.Option(
+        False, "--prose", help="Rewrite as release notes / a PR body (one cheap LLM call)."
+    ),
+) -> None:
+    """Write a why-annotated changelog for a git range from the dev log."""
+    from wikiforge.paths import resolve_capture_home
+    from wikiforge.services import run_changelog
+
+    excluded = frozenset(t.strip() for t in exclude_types.split(",") if t.strip())
+    try:
+        text = asyncio.run(
+            run_changelog(
+                resolve_capture_home(home), range_spec,
+                limit=limit, exclude_types=excluded, prose=prose,
+            )
+        )
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(text)
+
+
 def main() -> None:
     """Console-script entry point."""
     app()

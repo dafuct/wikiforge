@@ -187,4 +187,18 @@ def build_server(home: Path) -> FastMCP:
         """Generate a derived document (report/summary/...) from a topic's article."""
         return await run_generate(home, kind, topic, out=None)
 
+    @mcp.tool
+    async def build_changelog(
+        range_spec: str | None = None, limit: int = 50, exclude_types: str = ""
+    ) -> str:
+        """Why-annotated changelog for a git range (zero LLM; synthesize it yourself)."""
+        from wikiforge.llm.safety import seal_source_data
+        from wikiforge.services import run_changelog
+
+        excluded = frozenset(t.strip() for t in exclude_types.split(",") if t.strip())
+        text = await run_changelog(
+            home, range_spec, limit=max(1, min(limit, 200)), exclude_types=excluded
+        )
+        return seal_source_data(text)
+
     return mcp
