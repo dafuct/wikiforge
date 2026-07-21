@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from wikiforge.federation.fanout import Sourced
 from wikiforge.llm.provider import LLMProvider
 from wikiforge.llm.safety import seal_source_data as _seal
 from wikiforge.ops.why import safe_event_type
@@ -138,7 +139,7 @@ def _annotation(t: ChunkTarget, now: datetime) -> str | None:
 
 
 def render_excerpts(
-    targets: list[ChunkTarget],
+    targets: list[Sourced[ChunkTarget]],
     *,
     max_chars: int | None = None,
     annotate: bool = False,
@@ -149,20 +150,32 @@ def render_excerpts(
     Every payload passes through ``seal_source_data`` so stored text can't break
     out of its envelope (prompt-injection defense on the OUTPUT side). With
     ``annotate`` (the recall path only), each block is prefixed by one trusted
-    epistemic-metadata line; the default render is byte-identical to before.
+    epistemic-metadata line. A chunk from a peer wiki carries its alias in the
+    block id and in the annotation — both outside the seal, both locally
+    generated. Local-only output is byte-identical to the pre-federation render.
     """
     if not targets:
         return ""
     now = now or datetime.now(UTC)
     parts = [RECALL_HEADER]
-    for t in targets:
+    for sourced in targets:
+        t = sourced.item
         text = t.text
         if max_chars is not None and len(text) > max_chars:
             text = text[:max_chars] + "…"
-        block = f"<source_data id='{t.owner_type}:{t.owner_id}#{t.seq}'>{_seal(text)}</source_data>"
+        prefix = f"{sourced.origin}/" if sourced.origin else ""
+        block = (
+            f"<source_data id='{prefix}{t.owner_type}:{t.owner_id}#{t.seq}'>"
+            f"{_seal(text)}</source_data>"
+        )
         if annotate:
             line = _annotation(t, now)
             if line is not None:
+                if sourced.origin:
+                    # _annotation always ends in ')' when it returns a string, so
+                    # splicing before it (line[:-1]) safely reopens the same
+                    # parenthesised group rather than risking a dangling paren.
+                    line = f"{line[:-1]} · from {sourced.origin})"
                 block = f"{line}\n{block}"
         parts.append(block)
     return "\n\n".join(parts)

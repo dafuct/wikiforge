@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from wikiforge.config.settings import Config
 from wikiforge.embed.provider import EmbeddingProvider
+from wikiforge.federation.fanout import Sourced
+from wikiforge.federation.registry import PeerRef
 from wikiforge.query.service import render_excerpts
 from wikiforge.search.retriever import HybridRetriever
 from wikiforge.search.rrf import ChunkTarget
@@ -127,68 +130,155 @@ def _recency_weight(target: ChunkTarget, *, now: datetime, half_life_days: float
     return float(0.5 ** (age_days / half_life_days))
 
 
+async def score_targets(
+    repo: Repository,
+    targets: list[ChunkTarget],
+    *,
+    query_vec: list[float],
+    cfg: Config,
+    now: datetime,
+) -> list[tuple[float, ChunkTarget]]:
+    """Gate and weight one wiki's candidates, entirely inside its own repository.
+
+    This is where the rowid rule lives (spec §6.2): ``chunk_vectors`` is a
+    per-database lookup, so scoring must finish before a result may cross a
+    wiki boundary — a caller must always pass the SAME repository the targets
+    were resolved from (never a peer's targets against the local repo, or
+    vice versa). Returns admitted candidates only, ordered by weighted score.
+    """
+    targets = [
+        t
+        for t in targets
+        if not (t.owner_source_type == "dev_event" and t.consolidated is not None)
+    ]
+    if not targets:
+        return []
+    stored = await repo.chunk_vectors([t.rowid for t in targets])
+    scored = [(_dot(query_vec, stored[t.rowid]), t) for t in targets if t.rowid in stored]
+    admitted = [(sim, t) for sim, t in scored if sim >= cfg.recall.min_similarity]
+    admitted.sort(
+        key=lambda pair: (
+            pair[0]
+            * _recency_weight(pair[1], now=now, half_life_days=cfg.recall.devlog_half_life_days)
+        ),
+        reverse=True,
+    )
+    return admitted
+
+
+def cap_and_dedup(
+    scored: list[tuple[float, Sourced[ChunkTarget]]],
+    *,
+    seen: set[tuple[str, str, int, int]],
+    max_excerpts: int,
+) -> list[Sourced[ChunkTarget]]:
+    """Merge every wiki's admitted candidates, drop repeats, apply the cap.
+
+    The cap is applied *after* the merge, so federation changes which excerpts
+    arrive but never how many — the recall hook's bounded-injection contract is
+    unchanged (spec §7.1). Dedup keys include the origin, because ids are
+    per-database: a peer's ``article:7#2`` is a different chunk from the local
+    ``article:7#2``, even though the tuple minus origin collides.
+    """
+    ordered = sorted(scored, key=lambda pair: pair[0], reverse=True)
+    kept: list[Sourced[ChunkTarget]] = []
+    for _, sourced in ordered:
+        key = (sourced.origin, sourced.item.owner_type, sourced.item.owner_id, sourced.item.seq)
+        if key in seen:
+            continue
+        kept.append(sourced)
+        if len(kept) >= max_excerpts:
+            break
+    return kept
+
+
 async def recall_excerpts(
     repo: Repository,
     retriever: HybridRetriever,
     embedder: EmbeddingProvider,
     cfg: Config,
     prompt: str,
+    *,
+    peers: Sequence[PeerRef] = (),
+    dim: int = 0,
     session_id: str | None = None,
     now: datetime | None = None,
 ) -> str:
-    """Return a sealed excerpt block for ``prompt``, or ``""`` when nothing is relevant.
+    """Return a sealed excerpt block for ``prompt``, or ``""`` when nothing fits.
 
-    The prompt is embedded exactly once (query kind) and reused for retrieval;
-    candidates are gated by cosine against their STORED chunk vectors — no text
-    is re-embedded. A candidate with no vector yet (captured since the last
-    flush) is skipped; the SessionStart backfill closes that window.
+    The prompt is embedded exactly once (query kind) and the same vector is
+    reused for every wiki — which is sound only because peers must pass the
+    compatibility gate, i.e. share the local vector space. Each wiki's
+    candidates are retrieved, vector-loaded, scored and gated inside its own
+    repository (:func:`score_targets`); only ``(score, Sourced[ChunkTarget])``
+    pairs cross the ``fan_out`` boundary — already-resolved data, so a peer's
+    rowid is never used again as a lookup key against a different repository
+    (it rides along inertly inside the returned ``ChunkTarget``, but nothing
+    downstream re-dereferences it). A candidate with no vector yet (captured
+    since the last flush) is skipped; the SessionStart backfill closes that
+    window.
 
     When ``session_id`` is given and dedup is enabled, chunks already injected
-    into this session are dropped before the excerpt cap is applied, and the
-    newly chosen chunks are logged so later prompts in the same session don't
-    repeat them.
+    into this session (local or peer, origin-aware) are dropped before the
+    excerpt cap is applied, and the newly chosen chunks are logged so later
+    prompts in the same session don't repeat them.
     """
+    from wikiforge.federation.fanout import fan_out, peer_candidates
+
+    now = now or datetime.now(UTC)
     (prompt_vec,) = await embedder.embed([prompt], kind="query")
-    targets = await retriever.retrieve(
+
+    local_targets = await retriever.retrieve(
         prompt, depth="standard", owner_types=["article", "raw_source"], query_vec=prompt_vec
     )
-    if not targets:
-        return ""
-    targets = [
-        t for t in targets
-        if not (t.owner_source_type == "dev_event" and t.consolidated is not None)
+    scored: list[tuple[float, Sourced[ChunkTarget]]] = [
+        (sim, Sourced(origin="", item=t))
+        for sim, t in await score_targets(
+            repo, local_targets, query_vec=prompt_vec, cfg=cfg, now=now
+        )
     ]
-    if not targets:
+
+    async def peer_read(peer_repo: Repository) -> list[tuple[float, ChunkTarget]]:
+        rowids = await peer_candidates(
+            peer_repo,
+            prompt,
+            query_vec=prompt_vec,
+            owner_types=["article", "raw_source"],
+            limit=cfg.retrieval.top_k * 3,
+        )
+        targets = await peer_repo.chunk_targets(rowids)
+        return await score_targets(peer_repo, targets, query_vec=prompt_vec, cfg=cfg, now=now)
+
+    for sourced in await fan_out(
+        peers,
+        peer_read,
+        local=None,
+        dim=dim,
+        timeout_ms=cfg.federation.peer_timeout_ms,
+        require_compat=True,
+        local_model=embedder.model,
+    ):
+        scored.append((sourced.item[0], Sourced(origin=sourced.origin, item=sourced.item[1])))
+
+    if not scored:
         return ""
-    stored = await repo.chunk_vectors([t.rowid for t in targets])
-    scored = [
-        (_dot(prompt_vec, stored[t.rowid]), t) for t in targets if t.rowid in stored
-    ]
-    now = now or datetime.now(UTC)
-    kept = sorted(
-        ((sim, t) for sim, t in scored if sim >= cfg.recall.min_similarity),
-        key=lambda pair: pair[0]
-        * _recency_weight(pair[1], now=now, half_life_days=cfg.recall.devlog_half_life_days),
-        reverse=True,
-    )
+    seen: set[tuple[str, str, int, int]] = set()
     dedup = cfg.recall.dedup and session_id is not None
     if dedup:
         assert session_id is not None
         await repo.ensure_recall_log()
         await repo.purge_recall_log((now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"))
         seen = await repo.recall_seen(session_id)
-        # "" is the local-wiki origin (see recall_seen/log_recall); every candidate
-        # here is local until Task 11 wires peer results into this function.
-        kept = [(sim, t) for sim, t in kept if ("", t.owner_type, t.owner_id, t.seq) not in seen]
-    kept = kept[: cfg.recall.max_excerpts]
+    kept = cap_and_dedup(scored, seen=seen, max_excerpts=cfg.recall.max_excerpts)
     if not kept:
         return ""
-    chosen = [t for _, t in kept]
     if dedup:
         assert session_id is not None
         await repo.log_recall(
-            session_id, [("", t) for t in chosen], now.strftime("%Y-%m-%dT%H:%M:%SZ")
+            session_id,
+            [(s.origin, s.item) for s in kept],
+            now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
     return render_excerpts(
-        chosen, max_chars=cfg.recall.max_chars, annotate=cfg.recall.annotate, now=now
+        kept, max_chars=cfg.recall.max_chars, annotate=cfg.recall.annotate, now=now
     )

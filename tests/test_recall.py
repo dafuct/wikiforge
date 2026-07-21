@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from wikiforge.config.settings import RecallConfig
+from wikiforge.config.settings import FederationConfig, RecallConfig
+from wikiforge.federation.fanout import Sourced
 from wikiforge.ops.recall import (
     parse_hook_session_id,
     parse_prompt_hook_stdin,
@@ -34,6 +35,7 @@ def test_should_recall_skip_rules() -> None:
 
 class _Cfg:
     recall = RecallConfig()
+    federation = FederationConfig()
 
 
 class _StubRetriever:
@@ -180,6 +182,7 @@ async def test_recall_seen_chunk_does_not_consume_a_slot() -> None:
     """
     class _Cfg3:
         recall = RecallConfig(max_excerpts=3)
+        federation = FederationConfig()
 
     targets = [
         _target("we hit a deadlock in the bridge", 1, seq=0),  # seen, highest sim
@@ -213,6 +216,7 @@ async def test_recall_orders_devlog_by_recency_weighted_similarity() -> None:
 
     class _OneSlot:
         recall = RecallConfig(max_excerpts=1)
+        federation = FederationConfig()
 
     old = _target("deadlock note from three weeks ago", 1)
     old.owner_ts = "2026-06-27T00:00:00Z"
@@ -310,8 +314,8 @@ async def test_annotation_omits_missing_fields_and_default_render_is_unchanged()
 
     bare = _target("text only", 1)
     bare.owner_source_type = "dev_event"          # no ts, no type
-    annotated = render_excerpts([bare], annotate=True)
+    annotated = render_excerpts([Sourced("", bare)], annotate=True)
     assert "(dev event)" in annotated             # only what exists — nothing guessed
-    plain = render_excerpts([bare])
+    plain = render_excerpts([Sourced("", bare)])
     assert "(dev event" not in plain              # default path byte-identical to today
     assert plain.startswith(RECALL_HEADER)

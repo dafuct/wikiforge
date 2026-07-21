@@ -213,6 +213,7 @@ def query(
     ),
 ) -> None:
     """Answer a question from the wiki's knowledge (articles + raw sources + dev log)."""
+    from wikiforge.federation.fanout import Sourced
     from wikiforge.query.service import NO_RESULTS_ANSWER, render_excerpts
     from wikiforge.services import run_extract, run_query
 
@@ -220,7 +221,11 @@ def query(
     try:
         if extract:
             targets = asyncio.run(run_extract(target_home, question, depth=depth, scope=scope))
-            typer.echo(render_excerpts(targets) if targets else NO_RESULTS_ANSWER)
+            # CLI --extract is local-only until Task 12 federates run_extract itself;
+            # every target is wrapped as local (origin="") to match render_excerpts's
+            # now-federation-aware signature without changing this command's behavior.
+            sourced = [Sourced("", t) for t in targets]
+            typer.echo(render_excerpts(sourced) if sourced else NO_RESULTS_ANSWER)
             return
         result = asyncio.run(run_query(target_home, question, depth=depth, scope=scope))
     except ValueError as exc:

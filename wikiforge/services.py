@@ -949,6 +949,7 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
     Fast path: bail out before touching the embedding stack when the wiki DB
     is absent or holds no chunks, so non-wiki projects pay ~0 ms per prompt.
     """
+    from wikiforge.federation.fanout import active_peers
     from wikiforge.ops.recall import (
         classify_route,
         parse_hook_session_id,
@@ -983,7 +984,13 @@ async def run_recall_hook(home: Path, hook_stdin: str) -> str:
                 await ensure_embedding_compat(repo, embedder)
                 retriever = HybridRetriever(repo, embedder, cfg)
                 excerpts = await recall_excerpts(
-                    repo, retriever, embedder, cfg, prompt,
+                    repo,
+                    retriever,
+                    embedder,
+                    cfg,
+                    prompt,
+                    peers=active_peers(cfg),
+                    dim=effective_embedding_dim(cfg),
                     session_id=parse_hook_session_id(hook_stdin),
                 )
         finally:
