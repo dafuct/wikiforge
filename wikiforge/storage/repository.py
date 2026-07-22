@@ -1032,6 +1032,19 @@ class Repository:
                 await self._q.insert_dev_event_file(self._db.conn, source_id=source_id, path=path)
             await self._db.conn.commit()
 
+    async def count_dev_event_files(self) -> int:
+        """How many (event, path) rows the file index holds.
+
+        Used by ``wiki maintain``'s ``paths`` job to decide whether there is
+        backfill work to do — a query, not a write, so it must survive a wiki
+        that predates the index (``rss``/``nimbus`` today) rather than raising.
+        """
+        try:
+            row = await self._q.count_dev_event_files(self._db.conn)
+        except sqlite3.OperationalError:
+            return 0
+        return int(row["n"]) if row is not None else 0
+
     async def add_dev_event_files(self, source_id: int, paths: list[str]) -> None:
         """Record which files a dev event touched (idempotent per (event, path))."""
         async with self._db.lock:
