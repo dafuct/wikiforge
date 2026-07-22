@@ -148,13 +148,22 @@ class CaptureConfig(BaseModel):
 
 
 class ConsolidateConfig(BaseModel):
-    """Dev-log consolidation: rollups of old events into the development-log article."""
+    """Dev-log consolidation: rollups of old events into the development-log article,
+    plus routing of consolidated events into their matching subject topics."""
 
     model_config = ConfigDict(extra="forbid")
 
     period: Literal["week", "month"] = "week"
     min_age_days: int = 14
     auto: bool = False
+    # Routing: when consolidating, attach each event to the compiled topic(s) it
+    # most resembles (local embedding match, zero LLM) so that topic's article
+    # cites it on the next compile. route_min_similarity is a COSINE gate on the
+    # same normalized vectors recall uses; 0.82 is a conservative default (above
+    # recall's measured-0.80 e5 floor) — re-measure per embedding model.
+    route: bool = True
+    route_min_similarity: float = 0.82
+    route_max_topics: int = 1
 
 
 class WhyConfig(BaseModel):

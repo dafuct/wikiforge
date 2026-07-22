@@ -194,7 +194,7 @@ async def _run_consolidate(ctx: JobContext) -> str:
     """Roll old events into the development-log article (one cheap call/period)."""
     from datetime import UTC, datetime
 
-    from wikiforge.ops.consolidate import consolidate_dev_log
+    from wikiforge.ops.consolidate import consolidate_dev_log, routed_clause
 
     llm = ctx.llm
     if llm is None:
@@ -202,7 +202,10 @@ async def _run_consolidate(ctx: JobContext) -> str:
     stats = await consolidate_dev_log(
         ctx.repo, ctx.embedder(), llm, ctx.cfg, ctx.home, now=datetime.now(UTC)
     )
-    return f"consolidated {stats.events} event(s) across {stats.periods} period(s)"
+    return (
+        f"consolidated {stats.events} event(s) across {stats.periods} period(s)"
+        f"{routed_clause(stats)}"
+    )
 
 
 JOBS: dict[str, Job] = {

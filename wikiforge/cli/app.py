@@ -782,7 +782,12 @@ def consolidate(
 
         stats = asyncio.run(run_consolidate(resolve_capture_home(home), only_if_auto=if_auto))
         if not if_auto:
-            typer.echo(f"Consolidated {stats.events} event(s) into {stats.periods} period(s)")
+            from wikiforge.ops.consolidate import routed_clause
+
+            typer.echo(
+                f"Consolidated {stats.events} event(s) into {stats.periods} period(s)"
+                f"{routed_clause(stats)}"
+            )
     except Exception as exc:
         if if_auto:
             return  # SessionStart entry must never break the session
