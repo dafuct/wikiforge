@@ -228,11 +228,6 @@ async def run_jobs(
         if not has_work:
             outcomes.append(JobOutcome(name, "nothing", "nothing to do"))
             continue
-        if dry_run:
-            outcomes.append(
-                JobOutcome(name, "skipped", "would run" + (" (paid)" if job.paid else " (free)"))
-            )
-            continue
         if job.paid:
             if governed is None:
                 outcomes.append(JobOutcome(name, "skipped", "no LLM backend available"))
@@ -242,6 +237,11 @@ async def run_jobs(
                     JobOutcome(name, "skipped", f"quota spent ({used_calls} calls in window)")
                 )
                 continue
+        if dry_run:
+            outcomes.append(
+                JobOutcome(name, "skipped", "would run" + (" (paid)" if job.paid else " (free)"))
+            )
+            continue
         try:
             paid_ctx = ctx
             if job.paid and governed is not None:
@@ -254,6 +254,7 @@ async def run_jobs(
                     _embedder=ctx._embedder,
                 )
             outcomes.append(JobOutcome(name, "done", await job.run(paid_ctx)))
+            ctx._embedder = paid_ctx._embedder
         except BudgetExhausted as exc:
             outcomes.append(JobOutcome(name, "skipped", f"quota: {exc}"))
         except Exception as exc:  # noqa: BLE001 -- one bad job must not lose the queue

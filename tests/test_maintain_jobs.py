@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -10,10 +12,16 @@ from pydantic import BaseModel
 from wikiforge.config.settings import load_config
 from wikiforge.llm.governed import Budget
 from wikiforge.llm.provider import LlmResult, ParsedResult
+from wikiforge.models.domain import RawSource
+from wikiforge.models.enums import SourceType
+from wikiforge.ops.consolidate import PeriodRollup
+from wikiforge.ops.flush import BatchDigestItem, BatchDigestOut
 from wikiforge.ops.maintain import JobContext, MaintainReport, run_jobs
 from wikiforge.services import init_wiki
 from wikiforge.storage.db import Database
 from wikiforge.storage.repository import Repository
+
+_OLD_TS = "2000-01-01T00:00:00Z"
 
 
 async def _ctx(home: Path) -> tuple[JobContext, Database]:
@@ -24,6 +32,30 @@ async def _ctx(home: Path) -> tuple[JobContext, Database]:
     db = await Database.open(home, dim=384)
     repo = Repository(db)
     return JobContext(home=home, cfg=cfg, repo=repo, tracker=CostTracker(repo, cfg), llm=None), db
+
+
+async def _dev_event(repo: Repository, *, ts: str, digest_pending: bool) -> RawSource:
+    """Insert a dev-event raw source directly, bypassing capture_event's LLM path.
+
+    ``digest_pending`` feeds ``digests``'s probe; ``ts`` (independent of
+    ``fetched_at``, which stays fixed) feeds ``consolidate``'s age-cutoff probe —
+    mirrors ``tests/test_consolidate.py``'s own ``_event`` helper.
+    """
+    provenance = {"ts": ts, "type": "chore"}
+    if digest_pending:
+        provenance["digest"] = "pending"
+    src = RawSource(
+        content_hash=f"h-{ts}-{digest_pending}",
+        source_type=SourceType.DEV_EVENT,
+        title=f"Dev event {ts}",
+        text="did some maintenance work on the retriever" * 3,
+        fetched_at=datetime(2026, 7, 20, 9, 0, 0, tzinfo=UTC),
+        provenance=provenance,
+    )
+    await repo.ingest_raw_source(src)
+    stored = await repo.get_raw_source_by_hash(src.content_hash)
+    assert stored is not None
+    return stored
 
 
 @pytest.mark.asyncio
@@ -259,3 +291,127 @@ async def test_paid_job_helpers_report_missing_llm_instead_of_raising(tmp_path: 
         await db.close()
     assert digest_detail == "no LLM backend available"
     assert consolidate_detail == "no LLM backend available"
+
+
+class _FakeEmbedder384:
+    """Deterministic 384-dim embedder matching ``_ctx``'s database dimension."""
+
+    dim = 384
+    model = "fake"
+    provider_name = "fake"
+
+    async def embed(self, texts: list[str], *, kind: str = "passage") -> list[list[float]]:
+        return [[0.0] * 384 for _ in texts]
+
+
+class _FakeMaintainLLM:
+    """Answers whichever schema a paid job asks for, so real job bodies run end to end.
+
+    Unlike ``_FakeProvider`` above (whose ``parse`` is never expected to actually
+    run), this fake IS exercised for real by ``digests`` and ``consolidate``'s own
+    ``run()`` bodies below, so it must return a correctly-typed
+    ``BatchDigestOut``/``PeriodRollup`` rather than a placeholder schema.
+    """
+
+    async def parse(
+        self,
+        purpose: str,
+        system: str,
+        user: str,
+        *,
+        tier: str | None = None,
+        schema: type,
+        topic_id: int | None = None,
+        session_id: int | None = None,
+    ) -> ParsedResult:
+        if schema is BatchDigestOut:
+            ids = [int(m) for m in re.findall(r"id='(\d+)'", user)]
+            items = [BatchDigestItem(id=i, summary="digested", type="chore") for i in ids]
+            return ParsedResult(
+                parsed=schema(items=items), input_tokens=1, output_tokens=1, model="fake"
+            )
+        assert schema is PeriodRollup
+        return ParsedResult(
+            parsed=schema(markdown="- [chore] rolled up"),
+            input_tokens=1,
+            output_tokens=1,
+            model="fake",
+        )
+
+    async def complete(self, *a: object, **k: object) -> LlmResult:  # pragma: no cover
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_embedder_cache_survives_a_paid_job_context_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """digests then consolidate in one invocation must build the embedder only once.
+
+    Each paid job runs against its own fresh ``JobContext`` (``paid_ctx``), seeded
+    from ``ctx._embedder`` at the moment it is constructed. Before the fix, a job
+    that built the embedder left it stranded on its own ``paid_ctx`` — never
+    written back to ``ctx`` — so the next paid job's fresh ``paid_ctx`` saw a
+    still-``None`` cache and paid the ~9s cold-load cost a second time.
+    """
+    import wikiforge.embed.factory as factory
+
+    home = tmp_path / "wiki"
+    await init_wiki("w", home)
+    ctx, db = await _ctx(home)
+    await _dev_event(ctx.repo, ts="2026-07-20T09:00:00Z", digest_pending=True)
+    await _dev_event(ctx.repo, ts=_OLD_TS, digest_pending=False)
+    ctx.cfg.consolidate.auto = True
+    ctx = JobContext(
+        home=ctx.home, cfg=ctx.cfg, repo=ctx.repo, tracker=ctx.tracker, llm=_FakeMaintainLLM()
+    )
+
+    built_count = 0
+
+    def counting_builder(*args: object, **kwargs: object) -> _FakeEmbedder384:
+        nonlocal built_count
+        built_count += 1
+        return _FakeEmbedder384()
+
+    monkeypatch.setattr(factory, "build_embedding_provider", counting_builder)
+    try:
+        report = await run_jobs(
+            ctx,
+            names=["digests", "consolidate"],
+            budget=Budget(max_calls=8, max_usd=0.5, window_hours=24),
+            dry_run=False,
+        )
+    finally:
+        await db.close()
+    statuses = {o.name: (o.status, o.detail) for o in report.outcomes}
+    assert statuses["digests"][0] == "done", statuses["digests"]
+    assert statuses["consolidate"][0] == "done", statuses["consolidate"]
+    assert built_count == 1
+
+
+@pytest.mark.asyncio
+async def test_dry_run_reports_the_real_skip_reason_not_would_run(tmp_path: Path) -> None:
+    """--dry-run must not claim a paid job "would run" when it would actually be skipped.
+
+    The paid-job LLM/budget gate must run before the dry-run short-circuit, so a
+    wiki with no LLM backend reports the same "no LLM backend available" that a
+    real (non-dry-run) invocation of the identical state would report — not a
+    misleading "would run (paid)" that implies the job would actually execute.
+    """
+    home = tmp_path / "wiki"
+    await init_wiki("w", home)
+    ctx, db = await _ctx(home)
+    await _dev_event(ctx.repo, ts="2026-07-20T09:00:00Z", digest_pending=True)
+    try:
+        report = await run_jobs(
+            ctx,
+            names=["digests"],
+            budget=Budget(max_calls=8, max_usd=0.5, window_hours=24),
+            dry_run=True,
+        )
+    finally:
+        await db.close()
+    outcome = next(o for o in report.outcomes if o.name == "digests")
+    assert outcome.status == "skipped"
+    assert outcome.detail == "no LLM backend available"
+    assert "would run" not in outcome.detail
