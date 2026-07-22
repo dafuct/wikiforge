@@ -155,14 +155,15 @@ async def score_targets(
         return []
     stored = await repo.chunk_vectors([t.rowid for t in targets])
     scored = [(_dot(query_vec, stored[t.rowid]), t) for t in targets if t.rowid in stored]
-    admitted = [(sim, t) for sim, t in scored if sim >= cfg.recall.min_similarity]
-    admitted.sort(
-        key=lambda pair: (
-            pair[0]
-            * _recency_weight(pair[1], now=now, half_life_days=cfg.recall.devlog_half_life_days)
-        ),
-        reverse=True,
-    )
+    admitted = [
+        (
+            sim * _recency_weight(t, now=now, half_life_days=cfg.recall.devlog_half_life_days),
+            t,
+        )
+        for sim, t in scored
+        if sim >= cfg.recall.min_similarity
+    ]
+    admitted.sort(key=lambda pair: pair[0], reverse=True)
     return admitted
 
 

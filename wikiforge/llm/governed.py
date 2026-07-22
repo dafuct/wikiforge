@@ -26,6 +26,11 @@ class Budget:
     max_calls: int
     max_usd: float
     window_hours: int
+    # Set by an explicit human override (--force) that widened the ceilings
+    # for this run only, so a downstream reader (MaintainReport.render) can
+    # describe the budget honestly instead of inferring "unlimited" from the
+    # magic numbers used to represent it.
+    forced: bool = False
 
 
 class GovernedProvider:
@@ -42,7 +47,6 @@ class GovernedProvider:
         self._inner = inner
         self._repo = repo
         self._budget = budget
-        self.calls_made = 0
 
     async def complete(
         self,
@@ -66,7 +70,6 @@ class GovernedProvider:
             topic_id=topic_id,
             session_id=session_id,
         )
-        self.calls_made += 1
         return result
 
     async def parse(
@@ -91,7 +94,6 @@ class GovernedProvider:
             topic_id=topic_id,
             session_id=session_id,
         )
-        self.calls_made += 1
         return result
 
     def _tag(self, purpose: str) -> str:

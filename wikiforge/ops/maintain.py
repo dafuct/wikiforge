@@ -78,6 +78,10 @@ class MaintainReport:
     usd_used: float
     calls_left: int
     dry_run: bool = False
+    # Mirrors Budget.forced — the --force run that produced this report, so
+    # render() can describe the budget honestly instead of printing the huge
+    # placeholder ceilings a forced run is given internally.
+    forced: bool = False
 
     def render(self) -> str:
         """One line per job plus a budget line."""
@@ -85,10 +89,16 @@ class MaintainReport:
         lines = [f"wiki maintain — {verb} {len(self.outcomes)} job(s)"]
         for o in self.outcomes:
             lines.append(f"  {o.name}: {o.status} — {o.detail}")
-        lines.append(
-            f"  budget: {self.calls_used} call(s) / ${self.usd_used:.4f} used, "
-            f"{self.calls_left} call(s) left in the window"
-        )
+        if self.forced:
+            lines.append(
+                f"  budget: {self.calls_used} call(s) / ${self.usd_used:.4f} used, "
+                "unlimited (--force)"
+            )
+        else:
+            lines.append(
+                f"  budget: {self.calls_used} call(s) / ${self.usd_used:.4f} used, "
+                f"{self.calls_left} call(s) left in the window"
+            )
         return "\n".join(lines)
 
 
@@ -266,4 +276,5 @@ async def run_jobs(
         usd_used=used_usd,
         calls_left=max(0, budget.max_calls - used_calls),
         dry_run=dry_run,
+        forced=budget.forced,
     )

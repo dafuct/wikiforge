@@ -1174,6 +1174,13 @@ async def run_why_hook(home: Path, hook_stdin: str) -> str:
         await db.close()
 
 
+# Same character class as wikiforge.federation.fanout's _ALIAS_UNSAFE (control
+# chars + DEL). That constant is private to its module and not part of
+# federation/__init__.py's __all__, so it is mirrored narrowly here rather
+# than imported across the layering boundary.
+_ALIAS_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
 async def run_peers_add(home: Path, target: str, *, alias: str | None) -> PeerRef:
     """Register ``target`` as a peer of the machine-global registry.
 
@@ -1182,10 +1189,16 @@ async def run_peers_add(home: Path, target: str, *, alias: str | None) -> PeerRe
     already be registered under any alias. Both paths are resolved before
     comparison so a trailing slash or ``..`` segment cannot disguise the local
     wiki as a distinct peer (spec §4.3 forbids self-federation, which would
-    double every fan-out result).
+    double every fan-out result). An explicit ``--alias`` carrying a control
+    character (e.g. a literal newline) is rejected outright: ``save_registry``
+    only escapes backslashes and double quotes, so anything else would write
+    invalid TOML and take the whole registry down on the next load.
     """
     from wikiforge.federation.registry import load_registry, save_registry, slugify_alias
     from wikiforge.storage.db import DB_FILENAME
+
+    if alias is not None and _ALIAS_CONTROL_CHARS.search(alias):
+        raise ValueError(f"--alias {alias!r} contains a control character; not allowed")
 
     peer_home = Path(target).expanduser().resolve()
     if not (peer_home / CONFIG_FILENAME).exists() or not (peer_home / DB_FILENAME).exists():
@@ -1313,6 +1326,7 @@ async def run_maintain(home: Path, *, dry_run: bool = False, force: bool = False
         max_calls=10**9 if force else cfg.maintain.max_calls_24h,
         max_usd=float("inf") if force else cfg.maintain.max_usd_24h,
         window_hours=cfg.maintain.window_hours,
+        forced=force,
     )
     db = await Database.open(home, dim=effective_embedding_dim(cfg))
     try:
@@ -1490,11 +1504,12 @@ async def run_impact(
 
             from wikiforge.federation.fanout import active_peers, fan_out
 
-            report = await impact_ops.build_file_impact(repo, target, root=repo_root(), limit=limit)
+            root = repo_root()
+            report = await impact_ops.build_file_impact(repo, target, root=root, limit=limit)
 
             async def _peer_file_events(peer_repo: Repository) -> list[RawSource]:
                 found = await events_for_paths(
-                    peer_repo, [target], root=repo_root(), limit=limit, read_only=True
+                    peer_repo, [target], root=root, limit=limit, read_only=True
                 )
                 return found.events
 

@@ -79,6 +79,27 @@ def test_add_rejects_a_duplicate_home(tmp_path: Path, registry: Path) -> None:
     assert len(load_registry(registry)) == 1
 
 
+def test_add_rejects_a_control_character_in_an_explicit_alias(
+    tmp_path: Path, registry: Path
+) -> None:
+    """A newline in --alias must not be able to corrupt peers.toml (it would
+    otherwise land unescaped in save_registry's output, breaking every future
+    `wiki peers list`/`add`/`rm` for every registered peer, not just this one)."""
+    import asyncio
+
+    peer = tmp_path / "peer"
+    asyncio.run(init_wiki("peer", peer))
+    local = tmp_path / "local"
+    asyncio.run(init_wiki("local", local))
+
+    result = runner.invoke(
+        app, ["peers", "add", str(peer), "--alias", "bad\nalias", "--home", str(local)]
+    )
+
+    assert result.exit_code != 0
+    assert not registry.exists()
+
+
 def test_alias_collision_gets_a_suffix(tmp_path: Path, registry: Path) -> None:
     """Two wikis named the same still both register."""
     import asyncio
