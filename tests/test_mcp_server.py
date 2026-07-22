@@ -235,3 +235,54 @@ async def test_impact_report_clamps_limit_and_seals_output(
         result = await client.call_tool("impact_report", {"target": "x", "limit": 0})
     assert captured["limit"] == 1  # clamped to the lower bound of [1, 200]
     assert "</source_data>" not in result.data  # sealed (defanged)
+
+
+async def test_ingest_source_tool_attaches_to_topic(monkeypatch, tmp_path: Path) -> None:
+    """`ingest_source` with a topic ingests AND attaches — MCP parity with the CLI."""
+    from wikiforge import services
+    from wikiforge.config.settings import load_config
+    from wikiforge.embed.factory import effective_embedding_dim
+    from wikiforge.mcp import server as srv
+    from wikiforge.storage.db import Database
+    from wikiforge.storage.repository import Repository
+
+    home = tmp_path / "wiki"
+    await init_wiki("demo", home)
+    dim = effective_embedding_dim(load_config(home))
+
+    class _FE:
+        @property
+        def dim(self) -> int:
+            return dim
+
+        @property
+        def model(self) -> str:
+            return "fake"
+
+        @property
+        def provider_name(self) -> str:
+            return "fake"
+
+        async def embed(self, texts: list[str], *, kind: str = "passage") -> list[list[float]]:
+            return [[0.1] * dim for _ in texts]
+
+    monkeypatch.setattr(services, "build_embedding_provider", lambda *a, **k: _FE())
+    doc = tmp_path / "note.md"
+    doc.write_text("internal mcp note body", encoding="utf-8")
+
+    server = srv.build_server(home)
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "ingest_source", {"target": str(doc), "topic": "MCP Topic", "new_topic": True}
+        )
+    assert result.data["attached"] is True
+    assert result.data["topic"] == "mcp-topic"
+
+    db = await Database.open(home, dim=dim)
+    try:
+        repo = Repository(db)
+        topic = await repo.get_topic("mcp-topic")
+        assert topic is not None and topic.id is not None
+        assert len(await repo.raw_sources_for_topic(topic.id)) == 1
+    finally:
+        await db.close()

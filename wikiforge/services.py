@@ -248,6 +248,60 @@ async def _resolve_topic(repo: Repository, ref: str) -> Topic:
     raise ValueError(f"unknown topic {ref!r}")
 
 
+async def _resolve_or_create_topic(repo: Repository, ref: str, *, create: bool) -> Topic:
+    """Resolve a topic by slug/title, or create it when ``create`` is set.
+
+    Creation uses the model's default volatility — deliberately NO
+    :func:`infer_volatility` call — so attaching an internal source stays $0 in
+    LLM spend. Raises ``ValueError`` (with a ``--new-topic`` hint) when the topic
+    is missing and ``create`` is False.
+    """
+    try:
+        return await _resolve_topic(repo, ref)
+    except ValueError:
+        if not create:
+            raise ValueError(f"unknown topic {ref!r}; pass --new-topic to create it") from None
+        slug = slugify(ref)
+        topic_id = await repo.upsert_topic(Topic(slug=slug, title=ref))
+        created = await repo.get_topic_by_id(topic_id)
+        if created is None:
+            raise RuntimeError(f"topic {slug!r} vanished after create") from None
+        return created
+
+
+async def run_attach(
+    home: Path, source_ref: str, topic_ref: str, *, new_topic: bool = False
+) -> tuple[RawSource, Topic, bool]:
+    """Attach an already-ingested source to a topic so it compiles into the article.
+
+    Resolves ``source_ref`` (numeric id, ``#id``, content hash, or URL) and
+    ``topic_ref`` (slug or title). With ``new_topic`` the topic is created with
+    default volatility (no LLM call — attaching is $0). Returns
+    ``(source, topic, newly_attached)``, where ``newly_attached`` is False if the
+    pair already existed. Raises ``ValueError`` on an unknown source, or an
+    unknown topic without ``new_topic``.
+    """
+    cfg = load_config(home)
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        source = await _resolve_source(repo, source_ref)
+        if source is None or source.id is None:
+            raise ValueError(f"unknown source {source_ref!r}")
+        topic = await _resolve_or_create_topic(repo, topic_ref, create=new_topic)
+        if topic.id is None:
+            raise RuntimeError(f"topic {topic.slug!r} has no id")
+        newly = await repo.attach_source_to_topic(topic.id, source.id)
+        await ActivityRecorder(repo).record(
+            "attach",
+            {"source": str(source.id), "topic": topic.slug},
+            summary=f"attached source #{source.id} to {topic.slug!r}",
+        )
+        return source, topic, newly
+    finally:
+        await db.close()
+
+
 async def run_research(
     home: Path,
     topic_text: str,

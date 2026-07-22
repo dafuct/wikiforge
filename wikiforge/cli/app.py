@@ -54,14 +54,54 @@ def init(
 def ingest(
     target: str = typer.Argument(..., help="URL, PDF path, or text file to ingest."),
     home: str | None = HomeOption,
+    topic: str | None = typer.Option(
+        None, "--topic", help="Also attach the ingested source to this topic (slug or title)."
+    ),
+    new_topic: bool = typer.Option(
+        False, "--new-topic", help="With --topic: create the topic if it doesn't exist yet."
+    ),
 ) -> None:
-    """Ingest a source (URL, PDF, or file) into the wiki."""
-    from wikiforge.services import run_ingest
+    """Ingest a source (URL, PDF, or file), optionally attaching it to a topic for compilation."""
+    from wikiforge.services import run_attach, run_ingest
 
     target_home = resolve_home(home)
     source, created = asyncio.run(run_ingest(target_home, target))
     verb = "Ingested" if created else "Re-ingested (dedup)"
     typer.echo(f"{verb}: {source.title}")
+    if topic is not None:
+        if source.id is None:
+            typer.echo("Error: ingested source has no id to attach", err=True)
+            raise typer.Exit(code=1)
+        try:
+            _src, tpc, newly = asyncio.run(
+                run_attach(target_home, str(source.id), topic, new_topic=new_topic)
+            )
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1) from None
+        typer.echo(f"{'Attached' if newly else 'Already attached'} → {tpc.slug}")
+
+
+@app.command()
+def attach(
+    source: str = typer.Argument(..., help="Source id, #id, content hash, or URL to attach."),
+    topic: str = typer.Argument(..., help="Topic slug or title to attach the source to."),
+    home: str | None = HomeOption,
+    new_topic: bool = typer.Option(
+        False, "--new-topic", help="Create the topic if it doesn't exist yet."
+    ),
+) -> None:
+    """Attach an already-ingested source to a topic so it compiles into the article ($0, no web)."""
+    from wikiforge.services import run_attach
+
+    target_home = resolve_home(home)
+    try:
+        src, tpc, newly = asyncio.run(run_attach(target_home, source, topic, new_topic=new_topic))
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    verb = "Attached" if newly else "Already attached"
+    typer.echo(f"{verb}: {src.title!r} → {tpc.slug}")
 
 
 @app.command()
