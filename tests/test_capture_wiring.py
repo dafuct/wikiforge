@@ -36,11 +36,19 @@ def test_user_prompt_submit_hook_wired() -> None:
     assert entries[0].get("timeout") == 15
 
 
-def test_session_start_flushes_devlog_vectors() -> None:
-    hooks = _hooks()
-    commands = [h["command"] for h in hooks["SessionStart"][0]["hooks"]]
-    assert any("wiki capture --flush" in c for c in commands)
-    assert all(c.rstrip().endswith("true") for c in commands)
+def test_session_start_runs_one_maintenance_entry() -> None:
+    """Two ad-hoc hook lines collapse into one accounted entry point (spec §8.6)."""
+    hooks = json.loads(Path("hooks/hooks.json").read_text(encoding="utf-8"))
+    commands = [
+        h["command"]
+        for entry in hooks["hooks"]["SessionStart"]
+        for h in entry["hooks"]
+    ]
+    joined = "\n".join(commands)
+    assert "wiki maintain --hook" in joined
+    assert "wiki capture --flush" not in joined
+    assert "wiki consolidate --if-auto" not in joined
+    assert all(cmd.rstrip().endswith("; true") for cmd in commands)
 
 
 def test_session_start_reinstalls_stale_cli() -> None:

@@ -22,11 +22,7 @@
           },
           {
             "type": "command",
-            "command": "command -v wiki >/dev/null 2>&1 && wiki capture --flush >/dev/null 2>&1; true"
-          },
-          {
-            "type": "command",
-            "command": "command -v wiki >/dev/null 2>&1 && wiki consolidate --if-auto >/dev/null 2>&1; true"
+            "command": "command -v wiki >/dev/null 2>&1 && wiki maintain --hook >/dev/null 2>&1; true"
           },
           {
             "type": "command",
