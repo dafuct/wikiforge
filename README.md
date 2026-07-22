@@ -4,15 +4,39 @@
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-8A63D2)
 ![Python](https://img.shields.io/badge/Python-3.13%2B-3776AB)
 
-A local-first, tool-agnostic **personal knowledge base compiler**. wikiforge researches topics with parallel LLM agents, compiles the gathered evidence into cited, confidence-scored Markdown articles, and answers questions over that knowledge with hybrid retrieval — all backed by a single local SQLite file you own.
+**Zero-token memory for your Claude Code agent** — plus a local-first knowledge base it can read.
 
-It also doubles as **memory for your coding agent**: it records why your code changed, and feeds the relevant history back into your next Claude Code prompt — [without spending a single token](#agent-memory-that-costs-no-tokens).
+wikiforge gives your coding agent a memory that costs **no LLM tokens**: it records *why* your code changed, then feeds the relevant history back into your next prompt automatically — all on local embeddings, in one SQLite file you own. It's also a full knowledge-base compiler: research topics with parallel agents, compile cited, confidence-scored articles, and query them with hybrid retrieval.
 
-- **Local-first** — one SQLite database (WAL, FTS5 full-text + `sqlite-vec` vectors). No server, no cloud state. Your `~/wiki` is the whole system of record.
-- **Provenance everywhere** — every finding, citation, and conflict traces back to an immutable raw source and the research session that produced it.
+*Example — what the why-guardrail hands your agent before it edits a file, on zero LLM calls:*
+
+```text
+$ wiki why wikiforge/ops/recall.py
+● wikiforge/ops/recall.py — 3 recorded decisions (newest first)
+
+  2d ago · refactor
+    Embed the prompt once, then gate candidates against their stored vectors —
+    recall must stay under the 15s UserPromptSubmit hook timeout.
+
+  23d ago · decision
+    Gate at cosine 0.80 — measured, not guessed: unrelated uk+en prompts sit
+    ~0.78–0.81, relevant ones ~0.80–0.90 on multilingual-e5-small.
+
+  zero LLM calls · pure SQL + one local embedding
+```
+
+- **Zero tokens by default** — capture, recall, and context injection run on local embeddings and make **no LLM calls**. You spend tokens only when you explicitly research, compile, or summarize.
+- **Local-first** — one SQLite file (WAL, FTS5 full-text + `sqlite-vec` vectors). No server, no cloud state, no lock-in — your `~/wiki` is the whole system of record.
+- **Provenance + injection-aware** — every finding and citation traces back to an immutable raw source, and all ingested text is sealed as untrusted `<source_data>` before it ever reaches a model (on the way *out* to an agent's context, too).
 - **Two thin surfaces, one core** — a `rich` Typer CLI and a `fastmcp` MCP server are both thin wrappers over one shared service layer. Nothing is implemented twice.
-- **Injection-aware** — all ingested/fetched text is treated as untrusted data: wrapped in `<source_data>` tags and sealed against delimiter breakout before it ever reaches a model — on the way *out* to an agent's context, too.
-- **Zero-token by default** — capturing your dev history, reading the wiki back, and injecting it into an agent all run on local embeddings and cost **no LLM calls**. You only spend tokens when you explicitly ask to research, compile, or summarize.
+
+```text
+/plugin marketplace add dafuct/wikiforge
+/plugin install wikiforge@wikiforge
+/wikiforge:init
+```
+
+**Full walkthrough →** [docs/GUIDE-en.md](docs/GUIDE-en.md) · **Architecture →** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · **How it works →** [#how-it-works](#how-it-works) · **Agent memory in depth →** [#agent-memory-that-costs-no-tokens](#agent-memory-that-costs-no-tokens)
 
 ---
 
@@ -122,6 +146,28 @@ ingest / research  →  raw_sources (immutable)  →  chunks (FTS5 + vector inde
 - **Compilation** synthesizes a topic's evidence — researched findings and directly-attached sources alike — into a Markdown article with inline citations, detects conflicts between sources, and computes a **confidence score in code** (source count, diversity, recency, evidence strength, minus a conflict penalty). Compilation is incremental — an unchanged content digest is skipped unless `--full`. It makes no web-search calls: it synthesizes only over the sources already tied to the topic.
 - **Retrieval** merges FTS5 BM25 and `sqlite-vec` KNN rankings via Reciprocal Rank Fusion. `--scope` (`all` / `articles` / `devlog`) picks what's searched — everything, by default, at any depth. `--depth` (`quick` / `standard` / `deep`) picks ranking effort only; `deep` adds a cross-encoder rerank.
 - **Cost** for every LLM/embedding call is priced from the config and logged; `wiki stats` totals it.
+
+---
+
+## Architecture
+
+Two thin surfaces (a `rich` Typer CLI and a `fastmcp` MCP server) and the Claude Code hooks all call **one shared service layer** — nothing is implemented twice. Everything persists to a single local SQLite file; the LLM and embedding providers sit behind `Protocol`s, so the whole test suite runs with **no network and no keys**.
+
+```mermaid
+flowchart TB
+    CLI["wiki CLI · Typer"] --> SVC
+    MCP["MCP server · fastmcp"] --> SVC
+    HOOKS["Claude Code hooks<br/>capture · recall · why-guardrail"] --> SVC
+    SVC["Service core — one shared layer<br/>(services.py)"] --> STORE["SQLite · WAL<br/>FTS5 + sqlite-vec"]
+    SVC --> LLM["LLM providers · Protocol<br/>Anthropic API / claude -p<br/>+ Governed budget"]
+    SVC --> EMB["Local embeddings<br/>multilingual-e5-small"]
+```
+
+- **Two paths, one core.** The *paid* path (`research → compile → query`) is always explicit; the *free* path (capture, recall, the why-guardrail, MCP excerpts) runs on local embeddings and makes **zero LLM calls**.
+- **Immutable provenance.** Raw sources are content-addressed and never mutated; every citation is audited against them.
+- **Injection defense is uniform.** A single `seal_source_data` chokepoint neutralizes `<source_data>` delimiters in every untrusted or model-generated string — on the way *in* and *out*.
+
+**Full design doc → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).**
 
 ---
 
