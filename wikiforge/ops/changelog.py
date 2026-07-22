@@ -208,27 +208,38 @@ async def select_peer_events(
     root: str,
     limit: int,
     exclude_types: frozenset[str],
-) -> list[RawSource]:
+) -> list[ChangelogEntry]:
     """The same two-arm selection as :func:`build_changelog`, read-only.
 
-    Returns bare events, not a :class:`Changelog`: a peer has no opinion on
-    *this wiki's* coverage counters (``files_with_history``, ``excluded``) —
-    those describe how much of the caller's own range this wiki explains, and
-    a peer answering part of that range does not change the denominator.
+    Returns :class:`ChangelogEntry` — not bare events — so the caller's merge
+    can carry through which arm found each event. Losing that distinction
+    would mislabel a peer's genuine file-less ("window") decision as
+    file-matched, corrupting both the render's section placement and the
+    footer's "N by file, M by time window" split; this shape prevents that by
+    construction rather than by convention.
+
+    Builds no :class:`Changelog`: a peer has no opinion on *this wiki's*
+    coverage counters (``files_with_history``, ``excluded``) — those describe
+    how much of the caller's own range this wiki explains, and a peer
+    answering part of that range does not change the denominator.
     ``exclude_types`` is still honoured, so a peer cannot surface a type the
-    caller asked to suppress.
+    caller asked to suppress. ``origin`` is left at its default (``""``): a
+    peer-side selection has no notion of which wiki it itself is — the caller
+    stamps the real alias once results cross the ``fan_out`` boundary.
     """
     found = await events_for_paths(repo, rng.paths, root=root, limit=limit, read_only=True)
     seen = {event.id for event in found.events}
-    events = list(found.events)
+    entries = [ChangelogEntry(event=event, matched_by="files") for event in found.events]
     for event in await repo.dev_events_fileless_in_window(rng.base_iso, rng.head_iso, limit=limit):
         if event.id in seen:
             continue
         if event.provenance.get("repo", "") not in ("", root):
             continue
         seen.add(event.id)
-        events.append(event)
-    return [e for e in events if safe_event_type(e.provenance.get("type")) not in exclude_types]
+        entries.append(ChangelogEntry(event=event, matched_by="window"))
+    return [
+        e for e in entries if safe_event_type(e.event.provenance.get("type")) not in exclude_types
+    ]
 
 
 _TYPE_ORDER = (
