@@ -7,7 +7,7 @@
       "name": "wikiforge",
       "source": ".",
       "description": "Research topics, compile cited articles, and query your knowledge base — via slash commands and MCP tools, on your Claude subscription or an API key.",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "author": { "name": "dafuct" },
       "homepage": "https://github.com/dafuct/wikiforge",
       "license": "MIT"
