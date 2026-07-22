@@ -12,3 +12,11 @@ FROM llm_calls GROUP BY model;
 
 -- name: cost_by_purpose
 SELECT purpose, SUM(cost_usd) AS total FROM llm_calls GROUP BY purpose;
+
+-- name: maintenance_spend^
+-- The window bound is computed by SQLite's own clock so it matches the format
+-- `ts` was written with (`datetime('now')` → "YYYY-MM-DD HH:MM:SS"). A Python
+-- isoformat() bound would compare wrongly: "…T00:00:00" > "… 23:00:00".
+SELECT COUNT(*) AS calls, COALESCE(SUM(cost_usd), 0.0) AS cost
+FROM llm_calls
+WHERE purpose LIKE 'maintain:%' AND ts >= datetime('now', :window);

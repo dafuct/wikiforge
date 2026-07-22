@@ -304,6 +304,16 @@ class Repository:
         row = await self._q.cost_and_calls_since(self._db.conn, since=since_iso)
         return int(row["calls"]), float(row["cost"])
 
+    async def maintenance_spend(self, window_hours: int) -> tuple[int, float]:
+        """(calls, USD) spent by automatic maintenance inside the rolling window.
+
+        Derived from ``llm_calls`` rather than a separate ledger table: the
+        purpose prefix written by :class:`GovernedProvider` is the only marker
+        needed, so there is no second source of truth to drift.
+        """
+        row = await self._q.maintenance_spend(self._db.conn, window=f"-{int(window_hours)} hours")
+        return int(row["calls"]), float(row["cost"])
+
     async def recent_activity(self, limit: int) -> list[ActivityEntry]:
         """Return the most recent activity rows, newest first, as domain records."""
         entries: list[ActivityEntry] = []
