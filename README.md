@@ -84,6 +84,10 @@ uv run wiki research "Rust async runtimes" --new-topic
 # 2b. …or add sources by hand (URL / PDF / text file)
 uv run wiki ingest https://tokio.rs/blog/2020-04-preemption
 
+# 2c. …or attach an internal/private source to a topic — compiles with NO web search
+uv run wiki ingest ./docs/internal-auth-design.md --topic "our-auth-design" --new-topic
+#     (already ingested? bind it later:  uv run wiki attach <source-id> our-auth-design)
+
 # 3. Compile gathered evidence into cited, confidence-scored articles
 uv run wiki compile
 
@@ -114,7 +118,8 @@ ingest / research  →  raw_sources (immutable)  →  chunks (FTS5 + vector inde
 
 - **Ingestion** canonicalizes URLs (strip tracking params, normalize host/scheme), extracts clean text (`trafilatura` for HTML, `pymupdf` for PDF), and dedups by `sha256` content hash. Re-ingesting the same content updates provenance, never the immutable text.
 - **Research** fans out persona agents (academic, technical, applied, news, contrarian, …) in waves using `asyncio.TaskGroup`, with a per-session USD budget and resumability. Each agent web-searches, stores its finding as an immutable source, and normalizes it into the schema.
-- **Compilation** synthesizes a topic's evidence into a Markdown article with inline citations, detects conflicts between sources, and computes a **confidence score in code** (source count, diversity, recency, evidence strength, minus a conflict penalty). Compilation is incremental — an unchanged content digest is skipped unless `--full`.
+- **Attaching** binds an ingested source directly to a topic (`wiki ingest --topic` / `wiki attach`) so it compiles into that topic's article with **no web search and no LLM spend** — the bridge for internal or private material (a project's own dev log, an internal design doc) that public research would never surface. Research findings and directly-attached sources feed the same compiler; a topic's article can rest on either or both.
+- **Compilation** synthesizes a topic's evidence — researched findings and directly-attached sources alike — into a Markdown article with inline citations, detects conflicts between sources, and computes a **confidence score in code** (source count, diversity, recency, evidence strength, minus a conflict penalty). Compilation is incremental — an unchanged content digest is skipped unless `--full`. It makes no web-search calls: it synthesizes only over the sources already tied to the topic.
 - **Retrieval** merges FTS5 BM25 and `sqlite-vec` KNN rankings via Reciprocal Rank Fusion. `--scope` (`all` / `articles` / `devlog`) picks what's searched — everything, by default, at any depth. `--depth` (`quick` / `standard` / `deep`) picks ranking effort only; `deep` adds a cross-encoder rerank.
 - **Cost** for every LLM/embedding call is priced from the config and logged; `wiki stats` totals it.
 
@@ -362,7 +367,8 @@ still runs here).
 | Command | What it does |
 |---|---|
 | `wiki init <name>` | Create a wiki (config, DB, `topics/`). |
-| `wiki ingest <url\|path>` | Ingest a URL, PDF, or text file into the indexed knowledge base. |
+| `wiki ingest <url\|path>` | Ingest a URL, PDF, or text file into the indexed knowledge base. `--topic <slug>` also attaches it to a topic (add `--new-topic` to create the topic) so it compiles into that article — no web search, no LLM spend. |
+| `wiki attach <source> <topic>` | Bind an already-ingested source (numeric id, `#id`, content hash, or URL) to a topic so it compiles into the article. `--new-topic` creates the topic. Zero LLM. |
 | `wiki research "<topic>"` | Research a topic with persona agents. `--mode standard\|deep\|max`, `--new-topic`, `--budget <usd>`, `--resume <session-id>`. |
 | `wiki thesis "<claim>"` | Evaluate a claim with FOR/AGAINST agents → a cited verdict. `--mode`, `--budget`. |
 | `wiki compile` | Compile active topics into cited articles. `--full` recompiles everything. |
@@ -539,6 +545,8 @@ Topics carry a volatility and a staleness window. `wiki refresh` lists lapsed to
 
 `search_knowledge(question, depth, mode, scope)` defaults to **`mode="extract"`** — zero LLM calls, returns cited excerpts for the calling agent to synthesize in its own context. Pass `mode="synthesize"` to have the wiki's own LLM write the prose answer instead (the `wiki query` behavior). `scope` (`all` | `articles` | `devlog`) controls what's searched; `depth` (`quick` | `standard` | `deep`) controls ranking effort only.
 
+`ingest_source(target, topic, new_topic)` ingests a source and, when `topic` is given, attaches it to that topic (the same internal-source bridge as the CLI's `wiki ingest --topic`) so it compiles into that article — no web search.
+
 Example client entry (Claude Desktop / any MCP client):
 
 ```json
@@ -577,7 +585,7 @@ These are deliberate scoping decisions, not oversights:
 - **Injection defense is uniform.** Every place untrusted or model-generated text is wrapped in `<source_data>` seals the delimiter first (shared `seal_source_data`), so a crafted source can't break out of the data envelope.
 - **`wiki research` shows a live agent table; `wiki thesis` does not** (thesis runs to completion and prints its verdict).
 - **The static-site export renders article Markdown as escaped, pre-wrapped text** — there is no Markdown→HTML dependency, so bodies are shown verbatim (and safely escaped) rather than rendered.
-- **Dev events are never compiled into articles.** They stay raw, searchable sources — the dev log is history, not synthesized knowledge.
+- **Dev events aren't *auto*-compiled into topic articles.** Left alone they stay raw, searchable history and roll up only into the time-bucketed `development-log` article (`wiki consolidate`), not the synthesized topic articles. You *can* now bind any raw source — a dev event included — to a topic with `wiki attach`, and it will then compile into that topic's cited article.
 - **The recall similarity gate is tuned for the default `multilingual-e5-small` embedder.** Its 0.80 threshold was calibrated by measurement on a live wiki (unrelated uk+en prompts sit ~0.78–0.81, relevant ones ~0.80–0.90). If you switch embedding models, re-measure it and run `wiki reindex --embeddings` — these models have a high similarity floor, and a threshold below it makes recall inject noise into every prompt.
 - **Dev-event attribution is file-level, and events carry no commit anchor.** Capture records the files a change touched (that is what `wiki why` indexes), not hunk line ranges, and deliberately captures *uncommitted* work — so an event is not tied to a branch or a SHA. `wiki why <path>:52` therefore accepts the line and ignores it.
 - **Subagents do not receive wiki memory.** The `SubagentStart` hook's `additionalContext` output does reach a subagent's own context (verified against Claude Code's hooks reference), but the hook's stdin payload carries no `prompt`/task field to retrieve against — its documented fields are `session_id`, `transcript_path`, `hook_event_name`, `permission_mode`, `agent_id`, and `agent_type`, and the event's schema isn't otherwise documented (tracking issue: [anthropics/claude-code#19170](https://github.com/anthropics/claude-code/issues/19170)) — so there is nothing to key retrieval on. `SubagentStop` capture (recording what a subagent changed) is unaffected and does work.
