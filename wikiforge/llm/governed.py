@@ -10,10 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from wikiforge.config.settings import MAINTAIN_PURPOSE_PREFIX
 from wikiforge.llm.provider import LLMProvider, LlmResult, ParsedResult, T
 from wikiforge.storage.repository import Repository
-
-MAINTAIN_PURPOSE_PREFIX = "maintain:"
 
 
 class BudgetExhausted(RuntimeError):
