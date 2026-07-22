@@ -11,13 +11,22 @@ from wikiforge.federation.registry import PeerRef, save_registry
 
 
 @pytest.mark.asyncio
-async def test_extract_returns_sourced_targets(tmp_path: Path) -> None:
-    """The element type changed; every caller must handle origins."""
+async def test_extract_returns_sourced_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The element type changed; every caller must handle origins.
+
+    Isolates ``XDG_CONFIG_HOME`` like every other federation-aware test in this
+    suite (its own sibling below included) — without it, this test reads
+    whatever peer registry is actually on the machine running it, rather than
+    the empty one its "no peers registered" premise requires.
+    """
     # Build a single-wiki fixture with one indexed chunk (reuse the helper from
     # tests/test_federation_probe.py — import it rather than copying).
     from tests.test_federation_probe import _build_wiki
     from wikiforge.services import run_extract
 
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
     home = tmp_path / "local"
     await _build_wiki(home, text="alpha beta", vector=[0.1] * 384)
     got = await run_extract(home, "alpha", depth="standard", scope="all")
