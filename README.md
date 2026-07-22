@@ -129,7 +129,7 @@ local embeddings and makes **zero LLM calls**:
 | When | What happens | LLM cost |
 |---|---|---|
 | A task edits files | `Stop` hook records a **dev event**: your request (the why), changed files + `git diff --stat` (the what), an inferred type, the time | **none** |
-| Session starts | dev-log vectors are backfilled; up to `auto_digest_batches` pending digests run (default 1 cheap call); old dev events consolidate if `[consolidate] auto`; a stale `wiki` CLI reinstalls itself | **≤1 cheap call** |
+| Session starts | `wiki maintain --hook` runs its free jobs (backfill dev-log vectors, keep the file index current, check registered peers) then its paid jobs while the budget allows (digests, consolidation — see [Maintenance budget](#maintenance-budget)); a stale `wiki` CLI reinstalls itself | **bounded by `[maintain]`** (default ≤8 calls / $0.50 per rolling 24h) |
 | You type a prompt | `UserPromptSubmit` hook injects the most relevant wiki + dev-log excerpts (multilingual, recency-weighted, deduped within the session) into the agent's context, so it skips re-exploring what's already known | **none** |
 | The agent asks the wiki | MCP `search_knowledge` returns cited excerpts for the agent to synthesize in its own (already-paid-for) context | **none** |
 | You run `research` / `compile` / `--digests` | the only paths that spend tokens — always explicit | you choose |
@@ -164,15 +164,17 @@ It captures **uncommitted** work, so you never have to commit for the wiki to re
   digest-pending. `"sync"` is the old behavior — one cheap-tier call per event, at capture time.
   `"off"` never summarizes.
 - **Clearing the backlog:** `wiki capture --flush` backfills any dev-log chunks missing vectors (free,
-  no LLM). The plugin's `SessionStart` hook runs this once per session and, with `[capture]
-  auto_digest_batches` (default **1**, `0` disables), also drains up to that many digest batches — one
-  cheap-tier call per batch of up to 25 events — so the pending backlog clears itself over normal use.
-  Add `--digests` to force a full manual drain (unbounded batches).
+  no LLM), and with `[capture] auto_digest_batches` (default **1**, `0` disables) also drains up to
+  that many digest batches — one cheap-tier call per batch of up to 25 events. Add `--digests` to force
+  a full manual drain (unbounded batches). At `SessionStart` this backfill now runs as the free
+  `vectors` job inside `wiki maintain --hook` (see [Maintenance budget](#maintenance-budget)) rather
+  than as its own hook line — same work, now probed first and accounted.
 - **Consolidation:** `wiki consolidate` rolls dev events older than `[consolidate] min_age_days`
   (default 14) into a versioned **development-log** article, grouped by `period` (`week` | `month`) —
   one cheap-tier call per period. Consolidated events drop out of recall (the rollup represents them)
-  but stay searchable via `--scope devlog`. Runs at `SessionStart` when `[consolidate] auto = true`
-  (default off); a run with nothing eligible is a free no-op.
+  but stay searchable via `--scope devlog`. Still gated by `[consolidate] auto` (default off); at
+  `SessionStart` that check now runs as the `consolidate` job inside `wiki maintain --hook` instead of
+  its own `--if-auto` hook line — a run with nothing eligible is a free no-op either way.
 - **Read it back:** `wiki query "why did we change the retriever?"` — dev events are searched by
   default (`--scope all`, the default) at any `--depth`; scope, not depth, controls whether the dev
   log is included. Use `--scope devlog` to search only dev events, `--scope articles` for only
@@ -256,6 +258,105 @@ synthesize.
 
 ---
 
+## Federated memory
+
+`wiki peers` extends the read surfaces above — `why`, `changelog`, `impact`, `recall`, and `query
+--extract` / MCP `search_knowledge` — across every other wiki you register, read-only. A decision
+captured in one project's dev log becomes visible from another's.
+
+```bash
+wiki peers add ~/other-project/.wikiforge   # register another wiki as a read-only peer
+wiki peers list                             # reachability, model, compatibility, and the fix for anything not ok
+wiki peers rm <alias>                       # the per-peer off switch
+```
+
+- **The registry is machine-global, not per-project.** It lives at
+  `$XDG_CONFIG_HOME/wikiforge/peers.toml` (falling back to `~/.config/wikiforge/peers.toml`) — outside
+  every wiki and every repo, because a peer entry is an absolute machine path and a project's
+  `config.toml` can travel with its repository. Each wiki still opts in to *reading* the registry
+  independently (`[federation] enabled`, default `true`); disabling it, or removing every peer, restores
+  exactly today's single-wiki behavior.
+- **Read-only is SQLite's guarantee, not this codebase's.** A peer's `wiki.db` is opened with
+  `mode=ro` — every write, including a raw `conn.execute`, is refused at the driver level. Federation
+  can read another wiki; it cannot write to it, migrate it, or upgrade its schema.
+- **Three compatibility states**, read from the peer's *stamped* `wiki_meta.embedding_model` — never
+  from its `config.toml`, which only says what the model would be on the *next* run, not what the
+  stored vectors were actually built with:
+
+  | verdict | meaning | `recall` / `query --extract` / `search_knowledge` | `why` / `changelog` / `impact` |
+  |---|---|---|---|
+  | `ok` | peer's stamped model matches yours | contributes | contributes |
+  | `mismatch` | a different model is stamped | skipped entirely | contributes |
+  | `unknown` | no stamp (no `wiki_meta` table, or a row missing the `embedding_model` key) | skipped entirely | contributes |
+
+  **Vector federation needs a matching stamped model.** `unknown` is deliberately not treated as
+  "probably fine" — feeding unverified vectors into a similarity gate calibrated at 0.80 isn't a risk
+  worth taking on a guess. `wiki reindex --embeddings --home <peer>` is both the diagnosis and the fix,
+  run by that peer's own owner (repairing another wiki's index from here would itself be a cross-wiki
+  write).
+
+Two limitations, stated plainly rather than buried:
+
+- **An unstamped or mismatched peer contributes nothing to vector paths** (`recall`,
+  `query --extract`, `search_knowledge`) until its owner reindexes it.
+- **A peer without a `dev_event_files` table contributes nothing to `why`, `changelog`, or `impact`.**
+  Those commands index by file path; a peer that has never captured a dev event, or predates that
+  table, is skipped — not errored.
+
+Every federated result carries its origin: `· from <alias>` in recall excerpts, `[alias]` in `why`
+output, a per-origin line in `changelog`'s coverage footer — a cross-project answer is never presented
+as if it were local history. Recall's excerpt cap is applied *after* the merge across wikis, so
+federation changes *which* excerpts arrive, never how many. An unreachable, locked, or slow peer is
+dropped within `[federation] peer_timeout_ms` (default 500 ms) and never blocks the caller.
+
+---
+
+## Maintenance budget
+
+`wiki maintain` is the one accounted entry point for automatic upkeep — it replaced two separate
+`SessionStart` hook lines (`capture --flush`, `consolidate --if-auto`) with a single job queue, each
+job gated by its own cheap probe so nothing pays for work that doesn't exist:
+
+| # | job | cost | does |
+|---|---|---|---|
+| 1 | `vectors` | free | backfill dev-log chunk vectors missing an embedding |
+| 2 | `paths` | free | build/backfill the file→event index (`dev_event_files`) |
+| 3 | `peers` | free | check each registered peer's reachability and compatibility — reports the fix, repairs nothing (a cross-wiki write) |
+| 4 | `digests` | paid | batch-summarize pending dev events, one cheap call per 25 |
+| 5 | `consolidate` | paid | roll old events into the versioned development-log article |
+
+```bash
+wiki maintain --dry-run   # the plan: is there work, is it free or paid, would the quota allow it
+wiki maintain             # run it
+wiki maintain --force     # ignore the quota for this run (still recorded; still counts against later runs)
+wiki maintain --hook      # SessionStart mode: silent, always exits 0 — what the plugin actually runs
+```
+
+- **The ledger is derived, not a new table.** `llm_calls` already records `purpose`, both token
+  counts, `cost_usd` and a timestamp; maintenance spend in the current rolling window (`[maintain]
+  window_hours`, default 24) is `SUM(cost_usd) WHERE purpose LIKE 'maintain:%' AND ts >= window_start`.
+  One source of truth — nothing to keep in sync, nothing to drift.
+- **The `maintain:` purpose prefix is what makes that query complete.** `GovernedProvider` wraps the
+  real LLM provider for the duration of a run and rewrites every call's `purpose` to
+  `maintain:{purpose}` before forwarding it, so a job added later is counted automatically with no
+  per-job plumbing to remember. (Without it, `digests` would record plain `purpose="capture"` —
+  indistinguishable from interactive, non-budgeted capture.)
+- **Overshoot is bounded by exactly one call.** A call's cost is only known after it returns, so
+  enforcement is pre-call: the ledger is re-read before every call, and a call is refused once
+  `max_calls_24h` (default 8) or `max_usd_24h` (default $0.50) is already reached. Worst case, the one
+  call already in flight completes past the cap — fractions of a cent for a cheap-tier call — stated
+  as a bound, not engineered away.
+- **The governor spends nothing the user hadn't already opted into.** `digests` still honors
+  `[capture] auto_digest_batches`; `consolidate` still honors `[consolidate] auto` (default off). What
+  changes is that the spend is now accounted, capped across sessions, inspectable with `--dry-run`, and
+  reached through one hook line instead of two.
+
+Configure under `[maintain]`: `enabled`, `window_hours`, `max_calls_24h`, `max_usd_24h`, and `jobs`
+(the ordered list to run — an unrecognized name is ignored, so a config written for a later version
+still runs here).
+
+---
+
 ## Command reference
 
 | Command | What it does |
@@ -281,7 +382,9 @@ synthesize.
 | `wiki why <path>` | Show WHY a file is the way it is — the dev events that touched it, newest first. `--limit N`; `--hook` reads a `PreToolUse` payload and emits the guardrail warning. Zero LLM. |
 | `wiki changelog [range]` | Why-annotated changelog for a git range (default: upstream/main..HEAD; also accepts `A..B`, `A...B`, or a single ref). `--limit N`, `--exclude-types a,b`. Zero LLM; `--prose` rewrites it as release notes / a PR body (one cheap LLM call). |
 | `wiki impact <target>` | Blast radius of a source (URL/hash/id), a file path, or a topic slug — what claims, decisions, or co-changed files rest on it. `--limit N`, `--as source\|file\|topic` to force the reading. Zero LLM. |
+| `wiki peers add\|rm\|list` | Manage federated read-only peer wikis: register (`add <path> [--alias NAME]`), remove (`rm <alias>`), or list all with reachability, model, and compatibility (`list`). |
 | `wiki consolidate` | Roll dev events older than `[consolidate] min_age_days` into a versioned `development-log` article. `--if-auto` runs only when `[consolidate] auto = true`. |
+| `wiki maintain` | Run automatic maintenance (vectors, file index, peer check, digests, consolidate) within its budget. `--dry-run` shows the plan and spends nothing, `--force` ignores the quota once, `--hook` is the silent `SessionStart` mode. |
 | `wiki reindex --embeddings` | Rebuild every chunk vector with the active embedding model (local, zero LLM) — required after changing `local_model`. |
 | `wiki stats` | Wiki size + LLM spend. `--since <YYYY-MM-DD>` adds a spend window. |
 | `wiki context` | Print a recent-activity digest for pasting into an agent's context. |
@@ -344,6 +447,17 @@ precompact_max_chars = 20000
 period = "week"               # week | month
 min_age_days = 14             # only consolidate events older than this
 auto = false                  # also run at SessionStart when true
+
+[federation]                   # see "Federated memory"
+enabled = true                 # read peers registered with `wiki peers add` (none by default)
+peer_timeout_ms = 500          # per-peer wall clock; a slow peer is dropped, never awaited
+
+[maintain]                     # see "Maintenance budget"
+enabled = true
+window_hours = 24              # rolling budget window
+max_calls_24h = 8              # max LLM calls automatic maintenance may make per window
+max_usd_24h = 0.50             # and the USD ceiling; whichever binds first stops the run
+jobs = ["vectors", "paths", "peers", "digests", "consolidate"]
 
 [llm]
 backend = "api"               # api | subscription
@@ -467,6 +581,8 @@ These are deliberate scoping decisions, not oversights:
 - **The recall similarity gate is tuned for the default `multilingual-e5-small` embedder.** Its 0.80 threshold was calibrated by measurement on a live wiki (unrelated uk+en prompts sit ~0.78–0.81, relevant ones ~0.80–0.90). If you switch embedding models, re-measure it and run `wiki reindex --embeddings` — these models have a high similarity floor, and a threshold below it makes recall inject noise into every prompt.
 - **Dev-event attribution is file-level, and events carry no commit anchor.** Capture records the files a change touched (that is what `wiki why` indexes), not hunk line ranges, and deliberately captures *uncommitted* work — so an event is not tied to a branch or a SHA. `wiki why <path>:52` therefore accepts the line and ignores it.
 - **Subagents do not receive wiki memory.** The `SubagentStart` hook's `additionalContext` output does reach a subagent's own context (verified against Claude Code's hooks reference), but the hook's stdin payload carries no `prompt`/task field to retrieve against — its documented fields are `session_id`, `transcript_path`, `hook_event_name`, `permission_mode`, `agent_id`, and `agent_type`, and the event's schema isn't otherwise documented (tracking issue: [anthropics/claude-code#19170](https://github.com/anthropics/claude-code/issues/19170)) — so there is nothing to key retrieval on. `SubagentStop` capture (recording what a subagent changed) is unaffected and does work.
+- **An unstamped or mismatched peer contributes nothing to vector paths.** `recall`, `query --extract`, and `search_knowledge` only admit a peer whose stamped `wiki_meta.embedding_model` matches the local one — `wiki reindex --embeddings` on that peer, run by its owner, is what changes that. `why`, `changelog`, and `impact` are unaffected: they never touch a vector.
+- **A peer without `dev_event_files` contributes nothing to `why`, `changelog`, or `impact`.** Those commands index by file path; a peer that predates that table, or has simply never captured a dev event, is skipped rather than erred on. `wiki peers list` names the fix — run in that project, by its owner, since repairing a peer from here would itself be a cross-wiki write.
 
 ### Deferred toggles (not built)
 
