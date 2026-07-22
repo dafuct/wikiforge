@@ -751,6 +751,32 @@ def consolidate(
 
 
 @app.command()
+def maintain(
+    home: str | None = HomeOption,
+    hook: bool = typer.Option(False, "--hook", help="SessionStart mode: silent, never fails."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan; spend nothing."),
+    force: bool = typer.Option(False, "--force", help="Ignore the window quota for this run."),
+) -> None:
+    """Run automatic wiki maintenance within its budget (free jobs always)."""
+    from wikiforge.paths import resolve_capture_home
+    from wikiforge.services import run_maintain
+
+    target = resolve_capture_home(home)
+    if hook:
+        try:
+            asyncio.run(run_maintain(target, dry_run=False, force=False))
+        except Exception:
+            pass  # a SessionStart hook must never break the session
+        return
+
+    report = asyncio.run(run_maintain(target, dry_run=dry_run, force=force))
+    if not report.outcomes:
+        typer.echo("Nothing to maintain (no wiki here, or [maintain] is disabled).")
+        return
+    typer.echo(report.render())
+
+
+@app.command()
 def changelog(
     range_spec: str | None = typer.Argument(
         None, help="Git range (A..B, A...B, or a single ref). Default: upstream/main..HEAD."

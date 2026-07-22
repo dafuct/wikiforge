@@ -40,6 +40,7 @@ from wikiforge.models.domain import (
 )
 from wikiforge.models.enums import ExportTarget, OutputKind, QueryDepth
 from wikiforge.ops.flush import FlushStats
+from wikiforge.ops.maintain import MaintainReport
 from wikiforge.ops.scope import events_for_absolute, events_for_paths, repo_root
 from wikiforge.output.exporter import Exporter
 from wikiforge.output.generator import OutputGenerator
@@ -1285,6 +1286,52 @@ async def run_capture_flush(home: Path, *, digests: bool) -> FlushStats:
             digests=want_digests,
             max_batches=None if digests else auto_batches,
         )
+    finally:
+        await db.close()
+
+
+async def run_maintain(home: Path, *, dry_run: bool = False, force: bool = False) -> MaintainReport:
+    """Run automatic maintenance for one wiki within its window budget.
+
+    ``force`` lifts the ceilings for this run only — an explicit human
+    override; the spend is still recorded and still counts against later runs.
+    Returns an empty report when the wiki is missing or maintenance is off, so
+    the hook path has nothing to catch.
+    """
+    from wikiforge.activity.cost import CostTracker
+    from wikiforge.llm.governed import Budget
+    from wikiforge.ops.maintain import JobContext, run_jobs
+    from wikiforge.storage.db import DB_FILENAME
+
+    if not (home / CONFIG_FILENAME).exists() or not (home / DB_FILENAME).exists():
+        return MaintainReport(outcomes=[], calls_used=0, usd_used=0.0, calls_left=0)
+    cfg = load_config(home)
+    if not cfg.maintain.enabled:
+        return MaintainReport(outcomes=[], calls_used=0, usd_used=0.0, calls_left=0)
+
+    budget = Budget(
+        max_calls=10**9 if force else cfg.maintain.max_calls_24h,
+        max_usd=float("inf") if force else cfg.maintain.max_usd_24h,
+        window_hours=cfg.maintain.window_hours,
+    )
+    db = await Database.open(home, dim=effective_embedding_dim(cfg))
+    try:
+        repo = Repository(db)
+        tracker = CostTracker(repo, cfg)
+        try:
+            llm = build_llm_provider(cfg, tracker)
+        except Exception:
+            llm = None
+        ctx = JobContext(home=home, cfg=cfg, repo=repo, tracker=tracker, llm=llm)
+        report = await run_jobs(ctx, names=list(cfg.maintain.jobs), budget=budget, dry_run=dry_run)
+        if not dry_run:
+            done = sum(1 for o in report.outcomes if o.status == "done")
+            await ActivityRecorder(repo).record(
+                "maintain",
+                {"jobs": ",".join(o.name for o in report.outcomes if o.status == "done")},
+                summary=f"{done} job(s) done, {report.calls_used} call(s) used in window",
+            )
+        return report
     finally:
         await db.close()
 
