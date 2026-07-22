@@ -37,10 +37,15 @@ On the first session after install, a background hook runs `uv tool install` to 
 
 The plugin wires six Claude Code hooks (all fail-safe — they never break a session):
 
-- **`SessionStart`** — ensures the `wiki` CLI is installed, then `wiki capture --flush`: backfills
-  dev-log vectors (free) and drains up to `[capture] auto_digest_batches` pending digests (default 1
-  cheap call); runs `wiki consolidate --if-auto` (a no-op unless `[consolidate] auto = true`); and
-  starts the read-only Viewer UI (macOS/Linux).
+- **`SessionStart`** — ensures the `wiki` CLI is installed, then `wiki maintain --hook`: runs its free
+  jobs (backfill dev-log vectors, build/backfill the file→event index, check registered peers'
+  reachability and compatibility) and its paid jobs while the rolling budget allows (drain pending
+  digests, honoring `[capture] auto_digest_batches`; consolidate old events, honoring `[consolidate]
+  auto`) — each job gated by its own cheap probe, so nothing pays for work that doesn't exist and
+  nothing runs that the user hasn't already opted into; then starts the read-only Viewer UI
+  (macOS/Linux). One accounted entry point replaces the two separate hook lines this used to be. See
+  the README's [Maintenance budget](../README.md#maintenance-budget) for the ledger, the `maintain:`
+  purpose prefix, and the budget caps (`[maintain] max_calls_24h` / `max_usd_24h`).
 - **`Stop`** — `wiki capture --hook`: records a dev event (your request, changed files, git diff stat,
   and the git repository it happened in) after any file-editing task. Zero LLM at capture time. That
   repository tag is what keeps `/wikiforge:changelog` and `/wikiforge:impact` scoped to one project's
