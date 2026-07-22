@@ -177,7 +177,11 @@ It captures **uncommitted** work, so you never have to commit for the wiki to re
 - **Consolidation:** `wiki consolidate` rolls dev events older than `[consolidate] min_age_days`
   (default 14) into a versioned **development-log** article, grouped by `period` (`week` | `month`) —
   one cheap-tier call per period. Consolidated events drop out of recall (the rollup represents them)
-  but stay searchable via `--scope devlog`. Still gated by `[consolidate] auto` (default off); at
+  but stay searchable via `--scope devlog`. Each consolidated event is also **routed** into its most
+  relevant compiled topic — a local embedding match above `[consolidate] route_min_similarity`, **zero
+  LLM** — and attached there, so that subject article cites the internal dev event on the next
+  `wiki compile`. The dev log stops being write-only history and compounds into the knowledge base.
+  Still gated by `[consolidate] auto` (default off); at
   `SessionStart` that check now runs as the `consolidate` job inside `wiki maintain --hook` instead of
   its own `--if-auto` hook line — a run with nothing eligible is a free no-op either way.
 - **Read it back:** `wiki query "why did we change the retriever?"` — dev events are searched by
@@ -389,7 +393,7 @@ still runs here).
 | `wiki changelog [range]` | Why-annotated changelog for a git range (default: upstream/main..HEAD; also accepts `A..B`, `A...B`, or a single ref). `--limit N`, `--exclude-types a,b`. Zero LLM; `--prose` rewrites it as release notes / a PR body (one cheap LLM call). |
 | `wiki impact <target>` | Blast radius of a source (URL/hash/id), a file path, or a topic slug — what claims, decisions, or co-changed files rest on it. `--limit N`, `--as source\|file\|topic` to force the reading. Zero LLM. |
 | `wiki peers add\|rm\|list` | Manage federated read-only peer wikis: register (`add <path> [--alias NAME]`), remove (`rm <alias>`), or list all with reachability, model, and compatibility (`list`). |
-| `wiki consolidate` | Roll dev events older than `[consolidate] min_age_days` into a versioned `development-log` article. `--if-auto` runs only when `[consolidate] auto = true`. |
+| `wiki consolidate` | Roll dev events older than `[consolidate] min_age_days` into a versioned `development-log` article, **and route** each event into its most similar compiled topic (zero-LLM embedding match) so it becomes a citation there. `--if-auto` runs only when `[consolidate] auto = true`. |
 | `wiki maintain` | Run automatic maintenance (vectors, file index, peer check, digests, consolidate) within its budget. `--dry-run` shows the plan and spends nothing, `--force` ignores the quota once, `--hook` is the silent `SessionStart` mode. |
 | `wiki reindex --embeddings` | Rebuild every chunk vector with the active embedding model (local, zero LLM) — required after changing `local_model`. |
 | `wiki stats` | Wiki size + LLM spend. `--since <YYYY-MM-DD>` adds a spend window. |
@@ -453,6 +457,9 @@ precompact_max_chars = 20000
 period = "week"               # week | month
 min_age_days = 14             # only consolidate events older than this
 auto = false                  # also run at SessionStart when true
+route = true                  # attach each consolidated event to its matching topic (zero LLM)
+route_min_similarity = 0.82   # cosine gate for routing — re-measure per embedding model
+route_max_topics = 1          # attach each event to at most N topics
 
 [federation]                   # see "Federated memory"
 enabled = true                 # read peers registered with `wiki peers add` (none by default)
@@ -585,7 +592,7 @@ These are deliberate scoping decisions, not oversights:
 - **Injection defense is uniform.** Every place untrusted or model-generated text is wrapped in `<source_data>` seals the delimiter first (shared `seal_source_data`), so a crafted source can't break out of the data envelope.
 - **`wiki research` shows a live agent table; `wiki thesis` does not** (thesis runs to completion and prints its verdict).
 - **The static-site export renders article Markdown as escaped, pre-wrapped text** — there is no Markdown→HTML dependency, so bodies are shown verbatim (and safely escaped) rather than rendered.
-- **Dev events aren't *auto*-compiled into topic articles.** Left alone they stay raw, searchable history and roll up only into the time-bucketed `development-log` article (`wiki consolidate`), not the synthesized topic articles. You *can* now bind any raw source — a dev event included — to a topic with `wiki attach`, and it will then compile into that topic's cited article.
+- **Dev events compound two ways.** They roll up into the time-bucketed `development-log` article (`wiki consolidate`), and each consolidated event is also **routed** — a conservative local embedding match (`[consolidate] route`, zero LLM) — into its most relevant compiled topic, whose article then cites it. Below the similarity gate an event stays dev-log-only; you can always bind one by hand with `wiki attach`. The gate (`route_min_similarity`, default 0.82) is a *conservative* starting value, not a measured one — raise it if routing pulls weakly-related events into articles, lower it if genuine matches are missed, and re-measure after changing the embedding model (like `[recall] min_similarity`).
 - **The recall similarity gate is tuned for the default `multilingual-e5-small` embedder.** Its 0.80 threshold was calibrated by measurement on a live wiki (unrelated uk+en prompts sit ~0.78–0.81, relevant ones ~0.80–0.90). If you switch embedding models, re-measure it and run `wiki reindex --embeddings` — these models have a high similarity floor, and a threshold below it makes recall inject noise into every prompt.
 - **Dev-event attribution is file-level, and events carry no commit anchor.** Capture records the files a change touched (that is what `wiki why` indexes), not hunk line ranges, and deliberately captures *uncommitted* work — so an event is not tied to a branch or a SHA. `wiki why <path>:52` therefore accepts the line and ignores it.
 - **Subagents do not receive wiki memory.** The `SubagentStart` hook's `additionalContext` output does reach a subagent's own context (verified against Claude Code's hooks reference), but the hook's stdin payload carries no `prompt`/task field to retrieve against — its documented fields are `session_id`, `transcript_path`, `hook_event_name`, `permission_mode`, `agent_id`, and `agent_type`, and the event's schema isn't otherwise documented (tracking issue: [anthropics/claude-code#19170](https://github.com/anthropics/claude-code/issues/19170)) — so there is nothing to key retrieval on. `SubagentStop` capture (recording what a subagent changed) is unaffected and does work.

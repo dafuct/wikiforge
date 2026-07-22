@@ -40,6 +40,12 @@ class ConsolidateStats:
 
     periods: int
     events: int
+    routed: int = 0  # (topic, event) pairs newly attached by routing
+
+
+def routed_clause(stats: ConsolidateStats) -> str:
+    """The trailing ``, routed N event(s) to topics`` clause, or "" when nothing routed."""
+    return f", routed {stats.routed} event(s) to topics" if stats.routed else ""
 
 
 def period_key(ts: datetime, period: str) -> str:
@@ -68,6 +74,69 @@ def _event_line(event: RawSource) -> str:
     summary = event.provenance.get("summary") or event.text[:_LINE_CAP]
     kind = event.provenance.get("type", "change")
     return f"[{kind}] {summary}"
+
+
+def _dot(a: list[float], b: list[float]) -> float:
+    """Dot product of two normalized vectors == cosine similarity (recall's convention)."""
+    return sum(x * y for x, y in zip(a, b, strict=True))
+
+
+def _event_query_text(event: RawSource) -> str:
+    """The text a dev event is matched on: its digest summary if present, else body."""
+    return event.provenance.get("summary") or event.text
+
+
+async def _match_topics(
+    repo: Repository,
+    query_vec: list[float],
+    *,
+    cfg: Config,
+    devlog_topic_id: int,
+) -> list[int]:
+    """Topic ids whose compiled article ``query_vec`` most resembles.
+
+    Returns up to ``route_max_topics`` ACTIVE topic ids with cosine
+    ≥ ``route_min_similarity`` (best first), EXCLUDING the development-log topic.
+    Zero-LLM: a vector search over article chunks gated on the same normalized-dot
+    cosine recall uses. Empty when there are no compiled articles or nothing clears
+    the gate. Takes a precomputed vector so a caller can batch the embed step.
+    """
+    rowids = await repo.vec_search(query_vec, ["article"], cfg.retrieval.top_k)
+    if not rowids:
+        return []
+    targets = await repo.chunk_targets(rowids)
+    stored = await repo.chunk_vectors([t.rowid for t in targets])
+    best: dict[int, float] = {}  # topic_id -> best cosine seen
+    for t in targets:
+        if t.topic_id is None or t.topic_id == devlog_topic_id:
+            continue
+        if (t.topic_status or "ACTIVE") != "ACTIVE":
+            continue
+        v = stored.get(t.rowid)
+        if v is None:  # captured but not yet vectored — skip, it still rolls up
+            continue
+        sim = _dot(query_vec, v)
+        if sim >= cfg.consolidate.route_min_similarity:
+            best[t.topic_id] = max(best.get(t.topic_id, -1.0), sim)
+    ranked = sorted(best.items(), key=lambda kv: kv[1], reverse=True)
+    return [tid for tid, _ in ranked[: cfg.consolidate.route_max_topics]]
+
+
+async def _route_event_topics(
+    repo: Repository,
+    embedder: EmbeddingProvider,
+    event: RawSource,
+    *,
+    cfg: Config,
+    devlog_topic_id: int,
+) -> list[int]:
+    """Embed one dev event (query kind) and return its matching topic ids.
+
+    Thin wrapper over :func:`_match_topics`; ``consolidate_dev_log`` batches the
+    embed across a period's events instead of calling this per event.
+    """
+    (vec,) = await embedder.embed([_event_query_text(event)], kind="query")
+    return await _match_topics(repo, vec, cfg=cfg, devlog_topic_id=devlog_topic_id)
 
 
 async def consolidate_dev_log(
@@ -101,6 +170,7 @@ async def consolidate_dev_log(
     topic_id = await repo.upsert_topic(Topic(slug=slug, title="Development log"))
     done_periods = 0
     done_events = 0
+    done_routed = 0
     for period, evs in sorted(groups.items()):
         sections: list[str] = []
         failed = False
@@ -141,10 +211,25 @@ async def consolidate_dev_log(
                 await index_owner(
                     repo, embedder, owner_type="article", owner_id=saved.id, text=body
                 )
-        for event in evs:
+        # Route each event to its matching subject topic(s), then retire it. The
+        # embeds are batched across the period (one model pass, not one per event);
+        # routing runs only in this success path, so it is tied to the same
+        # once-per-event `consolidated` marker and a failed period retries next run.
+        route_vecs: list[list[float]] = (
+            await embedder.embed([_event_query_text(e) for e in evs], kind="query")
+            if cfg.consolidate.route and evs
+            else []
+        )
+        for idx, event in enumerate(evs):
+            if cfg.consolidate.route and event.id is not None:
+                for tid in await _match_topics(
+                    repo, route_vecs[idx], cfg=cfg, devlog_topic_id=topic_id
+                ):
+                    if await repo.attach_source_to_topic(tid, event.id):
+                        done_routed += 1
             await repo.set_raw_source_provenance(
                 event.content_hash, {**event.provenance, "consolidated": period}
             )
         done_periods += 1
         done_events += len(evs)
-    return ConsolidateStats(periods=done_periods, events=done_events)
+    return ConsolidateStats(periods=done_periods, events=done_events, routed=done_routed)

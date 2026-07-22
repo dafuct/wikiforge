@@ -124,6 +124,9 @@ guardrail_max_events = 2   # max events per warning
 period = "week"        # rollup granularity: week | month
 min_age_days = 14      # only events older than this are consolidated
 auto = false           # also run at SessionStart (wiki consolidate --if-auto)
+route = true                 # attach consolidated events to their matching topic (zero LLM)
+route_min_similarity = 0.82  # cosine gate for routing; conservative — re-measure per model
+route_max_topics = 1         # attach each event to at most N topics (top matches)
 
 [federation]
 enabled = true          # read peers registered with `wiki peers add` (none by default)
