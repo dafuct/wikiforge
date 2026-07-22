@@ -39,11 +39,7 @@ def test_user_prompt_submit_hook_wired() -> None:
 def test_session_start_runs_one_maintenance_entry() -> None:
     """Two ad-hoc hook lines collapse into one accounted entry point (spec §8.6)."""
     hooks = json.loads(Path("hooks/hooks.json").read_text(encoding="utf-8"))
-    commands = [
-        h["command"]
-        for entry in hooks["hooks"]["SessionStart"]
-        for h in entry["hooks"]
-    ]
+    commands = [h["command"] for entry in hooks["hooks"]["SessionStart"] for h in entry["hooks"]]
     joined = "\n".join(commands)
     assert "wiki maintain --hook" in joined
     assert "wiki capture --flush" not in joined
