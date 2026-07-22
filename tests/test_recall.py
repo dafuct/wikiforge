@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+import pytest
+
 from wikiforge.config.settings import FederationConfig, RecallConfig
 from wikiforge.federation.fanout import Sourced
 from wikiforge.ops.recall import (
@@ -231,6 +233,48 @@ async def test_recall_orders_devlog_by_recency_weighted_similarity() -> None:
         now=datetime(2026, 7, 18, tzinfo=UTC),
     )
     assert "yesterday" in out and "three weeks" not in out
+
+
+async def test_recency_can_override_a_higher_raw_similarity() -> None:
+    """A fresher, slightly-less-similar chunk must be able to outrank a stale,
+    more-similar one — the exact case an equal-similarity test can't catch.
+
+    Unlike ``test_recall_orders_devlog_by_recency_weighted_similarity`` (equal
+    raw similarities, so a bug that discards the weighted score and re-sorts
+    by raw similarity is invisible), these two candidates have DIFFERING raw
+    similarities: the stale one is the closer cosine match. Calls
+    ``score_targets`` directly so the returned float can be checked too, not
+    just the rendered order — the fix folds the weight into the returned
+    score, it doesn't just reorder a value that's discarded one level up.
+    """
+    from wikiforge.ops.recall import score_targets
+
+    old = _target("deadlock note from three weeks ago", 1)
+    old.owner_ts = "2026-06-27T00:00:00Z"  # 21 days before `now`
+    old.owner_source_type = "dev_event"
+    fresh = _target("deadlock note from yesterday", 2, seq=1)
+    fresh.owner_ts = "2026-07-17T00:00:00Z"  # 1 day before `now`
+    fresh.owner_source_type = "dev_event"
+
+    # Raw similarity FAVORS the stale event (1.0 vs 0.9) — both clear
+    # min_similarity (0.80), so only recency weighting can flip the order.
+    repo = _VecRepo({1: [1.0, 0.0, 0.0, 0.0], 2: [0.9, 0.0, 0.0, 0.0]})
+    now = datetime(2026, 7, 18, tzinfo=UTC)
+
+    scored = await score_targets(
+        repo, [old, fresh], query_vec=[1.0, 0.0, 0.0, 0.0], cfg=_Cfg(), now=now
+    )
+
+    # Order: the fresher, lower-raw-similarity chunk must rank first.
+    assert [t.rowid for _, t in scored] == [2, 1]
+
+    fresh_score = next(sim for sim, t in scored if t.rowid == 2)
+    old_score = next(sim for sim, t in scored if t.rowid == 1)
+    # The returned score is the WEIGHTED value, not the raw cosine fed in.
+    assert fresh_score == pytest.approx(0.9 * (0.5 ** (1 / 14)))
+    assert old_score == pytest.approx(1.0 * (0.5 ** (21 / 14)))
+    assert fresh_score != pytest.approx(0.9)
+    assert old_score != pytest.approx(1.0)
 
 
 async def test_articles_are_not_decayed() -> None:
