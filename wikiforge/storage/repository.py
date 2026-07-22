@@ -627,6 +627,34 @@ class Repository:
             async for r in self._q.findings_for_topic(self._db.conn, topic_id=topic_id)
         ]
 
+    async def attach_source_to_topic(self, topic_id: int, raw_source_id: int) -> bool:
+        """Attach a raw source directly to a topic (idempotent).
+
+        Returns ``True`` if newly attached, ``False`` if the pair already existed.
+        This is the internal-source bridge: a source attached here is returned by
+        :meth:`raw_sources_for_topic` and thus compiled and cited, with no research
+        session and no LLM spend. The existence check and insert are held under the
+        write lock together so the returned "newly attached?" flag is race-free.
+        """
+        async with self._db.lock:
+            existed = await self._q.topic_source_exists(
+                self._db.conn, topic_id=topic_id, raw_source_id=raw_source_id
+            )
+            await self._q.attach_topic_source(
+                self._db.conn, topic_id=topic_id, raw_source_id=raw_source_id
+            )
+            await self._db.conn.commit()
+        return existed is None
+
+    async def topics_for_source(self, raw_source_id: int) -> list[int]:
+        """Return the ids of topics this source is directly attached to (ascending)."""
+        return [
+            r["topic_id"]
+            async for r in self._q.topics_for_source(
+                self._db.conn, raw_source_id=raw_source_id
+            )
+        ]
+
     async def feedback_for_topic(self, topic_id: int) -> list[Feedback]:
         """Return user feedback recorded against a topic's articles."""
         return [

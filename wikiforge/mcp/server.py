@@ -13,6 +13,7 @@ from wikiforge.ops.why import event_summary, safe_event_type
 from wikiforge.query.service import RECALL_HEADER
 from wikiforge.services import (
     _resolve_topic,
+    run_attach,
     run_context,
     run_extract,
     run_generate,
@@ -137,10 +138,29 @@ def build_server(home: Path) -> FastMCP:
             await db.close()
 
     @mcp.tool
-    async def ingest_source(target: str) -> dict[str, object]:
-        """Ingest a URL, PDF path, or text file into the wiki."""
+    async def ingest_source(
+        target: str, topic: str | None = None, new_topic: bool = False
+    ) -> dict[str, object]:
+        """Ingest a URL, PDF path, or text file, optionally attaching it to a topic.
+
+        With ``topic`` the ingested source is attached to that topic (slug or title)
+        so it compiles into the article — no web search, no LLM spend for the attach.
+        ``new_topic`` creates the topic if it does not exist yet.
+        """
         source, created = await run_ingest(home, target)
-        return {"title": source.title, "created": created}
+        result: dict[str, object] = {
+            "title": source.title,
+            "created": created,
+            "topic": None,
+            "attached": None,
+        }
+        if topic is not None:
+            if source.id is None:
+                raise ValueError("ingested source has no id to attach")
+            _src, tpc, newly = await run_attach(home, str(source.id), topic, new_topic=new_topic)
+            result["topic"] = tpc.slug
+            result["attached"] = newly
+        return result
 
     @mcp.tool
     async def start_research(

@@ -4,7 +4,9 @@ WHERE rs.first_seen_session_id IN (SELECT id FROM research_sessions WHERE topic_
    OR rs.id IN (
        SELECT rf.raw_source_id FROM research_findings rf
        JOIN research_sessions s ON s.id = rf.session_id WHERE s.topic_id = :topic_id
-   );
+   )
+   -- Sources attached directly to the topic (ingested/internal, no research session).
+   OR rs.id IN (SELECT raw_source_id FROM topic_sources WHERE topic_id = :topic_id);
 
 -- name: findings_for_topic
 SELECT rf.* FROM research_findings rf

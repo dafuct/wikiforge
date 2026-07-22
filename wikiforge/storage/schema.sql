@@ -81,6 +81,17 @@ CREATE TABLE IF NOT EXISTS research_findings (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Direct topic<->source membership: lets an ingested/internal source belong to a
+-- topic WITHOUT a research session, so it compiles into the article with $0 LLM
+-- spend. raw_sources_for_topic unions this in alongside the session/finding path.
+CREATE TABLE IF NOT EXISTS topic_sources (
+    topic_id INTEGER NOT NULL REFERENCES topics(id),
+    raw_source_id INTEGER NOT NULL REFERENCES raw_sources(id),
+    attached_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (topic_id, raw_source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_topic_sources_source ON topic_sources(raw_source_id);
+
 CREATE TABLE IF NOT EXISTS thesis_verdicts (
     id INTEGER PRIMARY KEY,
     session_id INTEGER NOT NULL REFERENCES research_sessions(id),
