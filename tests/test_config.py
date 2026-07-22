@@ -59,6 +59,14 @@ def test_model_for_task_tier_override(wiki_home: Path) -> None:
     assert cfg.model_for_task("research", tier="cheap") == "claude-haiku-4-5"  # override wins
 
 
+def test_model_for_task_strips_maintain_prefix(wiki_home: Path) -> None:
+    """A governor-tagged purpose must route to the same model as its plain form."""
+    write_default_config(wiki_home, wiki_name="x")
+    cfg = load_config(wiki_home)
+    assert cfg.model_for_task("maintain:capture") == cfg.model_for_task("capture")
+    assert cfg.model_for_task("maintain:capture") == "claude-haiku-4-5"
+
+
 def test_personas_for_mode(wiki_home: Path) -> None:
     write_default_config(wiki_home, wiki_name="x")
     cfg = load_config(wiki_home)
@@ -97,6 +105,21 @@ def test_effort_for_task_defaults_low_with_template_overrides(tmp_path) -> None:
     assert cfg.effort_for_task("compile") == "low"      # MUST stay low (timeout fix)
     assert cfg.effort_for_task("thesis") == "medium"
     assert cfg.effort_for_task("synthesize") == "medium"
+
+
+def test_effort_for_task_strips_maintain_prefix(tmp_path) -> None:
+    """Same guarantee as model_for_task: the maintain: prefix must not change effort."""
+    cfg = _cfg(tmp_path)
+    assert cfg.effort_for_task("maintain:thesis") == cfg.effort_for_task("thesis")
+    assert cfg.effort_for_task("maintain:thesis") == "medium"
+
+
+def test_unprefixed_task_routing_is_unaffected(tmp_path) -> None:
+    """No regression for the common (unprefixed) case."""
+    cfg = _cfg(tmp_path)
+    assert cfg.model_for_task("capture") == "claude-haiku-4-5"
+    assert cfg.effort_for_task("thesis") == "medium"
+    assert cfg.effort_for_task("capture") == "low"
 
 
 def test_subprocess_timeout_default(tmp_path) -> None:

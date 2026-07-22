@@ -13,6 +13,16 @@ from wikiforge.models.enums import LlmBackend
 
 CONFIG_FILENAME = "config.toml"
 
+# GovernedProvider (wikiforge/llm/governed.py) tags every automatic-maintenance
+# LLM call's purpose with this prefix, for ledger accounting. Defined here
+# rather than in governed.py because model_for_task/effort_for_task below must
+# strip it before their task lookups, and governed.py already depends on
+# lower-level modules that import config.settings — the reverse import
+# direction closes a cycle (wikiforge.llm -> anthropic_provider ->
+# activity.cost -> config.settings). governed.py imports this constant from
+# here instead.
+MAINTAIN_PURPOSE_PREFIX = "maintain:"
+
 
 class ModelPrice(BaseModel):
     """Per-million-token pricing for one model."""
@@ -258,8 +268,14 @@ class Config(BaseModel):
 
         An explicit ``tier`` wins; otherwise the tier comes from the task->tier
         map (defaulting to "flagship"). Tiers: cheap | flagship | reasoning.
+        ``task`` may carry the governor's ``maintain:`` prefix (GovernedProvider
+        tags every automatic-maintenance call for ledger accounting) — that
+        prefix must not change which config entry a task routes to, so it is
+        stripped before the lookup.
         """
-        resolved_tier = tier or self.models.tasks.get(task, "flagship")
+        resolved_tier = tier or self.models.tasks.get(
+            task.removeprefix(MAINTAIN_PURPOSE_PREFIX), "flagship"
+        )
         if resolved_tier == "flagship":
             return self.models.flagship
         if resolved_tier == "cheap":
@@ -274,8 +290,12 @@ class Config(BaseModel):
         raise ValueError(f"unknown model tier {resolved_tier!r} for task {task!r}")
 
     def effort_for_task(self, task: str) -> str:
-        """Return the subscription-backend effort for a task (default: low)."""
-        return self.models.effort.get(task, "low")
+        """Return the subscription-backend effort for a task (default: low).
+
+        Same ``maintain:`` prefix-stripping as :meth:`model_for_task`, for the
+        same reason — a governed call must route identically to its plain form.
+        """
+        return self.models.effort.get(task.removeprefix(MAINTAIN_PURPOSE_PREFIX), "low")
 
     def personas_for_mode(self, mode: str) -> list[str]:
         """Return the ordered persona list for a research mode."""
