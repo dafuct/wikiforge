@@ -1377,7 +1377,9 @@ async def run_changelog(
         )
         if peer_sourced:
             merged = list(log.entries) + [
-                changelog_ops.ChangelogEntry(event=s.item, matched_by="files", origin=s.origin)
+                changelog_ops.ChangelogEntry(
+                    event=s.item.event, matched_by=s.item.matched_by, origin=s.origin
+                )
                 for s in peer_sourced
             ]
             merged.sort(key=lambda entry: entry.event.fetched_at, reverse=True)
