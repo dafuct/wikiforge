@@ -23,6 +23,8 @@ _scratch_demo/
 
 # SDD working scratch (task briefs, reports, review diffs)
 .superpowers/
+# SDD design docs (plans/specs/measurements) — kept on disk, not committed
+docs/superpowers/
 
 # viewer (Spring Boot + React)
 viewer/build/
