@@ -1,3 +1,3 @@
 """wikiforge — a local-first personal knowledge base compiler."""
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
